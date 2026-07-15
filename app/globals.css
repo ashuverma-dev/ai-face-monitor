@@ -179,13 +179,14 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
 }
 
 @media (max-width: 760px) {
-  :root { --sidebar-width: 0px; }
   .mobile-header { height: 62px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; background: rgba(23,17,35,.95); border-bottom: 1px solid rgba(166,99,204,.2); backdrop-filter: blur(16px); }
   .mobile-brand { display: flex; align-items: center; gap: 10px; font-size: 13px; } .mobile-brand span { width: 34px; height: 34px; border-radius: 10px; font-size: 10px; }
   .menu-button { width: 39px; height: 39px; border: 1px solid rgba(166,99,204,.28); border-radius: 10px; background: rgba(166,99,204,.08); color: var(--text); font-size: 19px; }
-  .sidebar { transform: translateX(-102%); transition: .28s ease; box-shadow: 20px 0 60px rgba(0,0,0,.35); }
+  .main-content { margin-left: 0; }
+  .sidebar { top: 62px; bottom: 0; width: min(84vw, 300px); height: auto; padding: 14px; overflow-y: auto; background: #171123; transform: translateX(-102%); transition: .28s ease; box-shadow: 20px 0 60px rgba(0,0,0,.45); }
+  .sidebar .brand { display: none; }
   .sidebar.open { transform: translateX(0); }
-  .backdrop { position: fixed; inset: 0; z-index: 35; border: 0; background: rgba(8,5,13,.62); }
+  .backdrop { position: fixed; inset: 62px 0 0; z-index: 35; border: 0; background: rgba(8,5,13,.72); backdrop-filter: blur(2px); }
   .page-header { position: relative; min-height: 72px; padding: 11px 16px; }
   .page-header h1 { font-size: 21px; } .page-header p { font-size: 9px; }
   .page-body { padding: 16px 13px 25px; }
