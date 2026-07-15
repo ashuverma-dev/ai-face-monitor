@@ -6,6 +6,7 @@ import {
   type ReactNode,
   type RefObject,
   type SetStateAction,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -29,6 +30,25 @@ type RecognitionResult = {
   confidence: number;
 };
 
+type RecognitionLog = {
+  log_id: number;
+  student_id: number | null;
+  student_name: string | null;
+  confidence: number;
+  detection_time: string;
+  status: "RECOGNIZED" | "UNKNOWN";
+  image_path?: string;
+};
+
+type CaptureRecord = {
+  id: number;
+  name: string;
+  status: "RECOGNIZED" | "UNKNOWN";
+  confidence: number;
+  captured_at: string;
+  image_url: string;
+};
+
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "https://ai-face-monitor-api-ashu.onrender.com"
 ).replace(/\/$/, "");
@@ -50,6 +70,14 @@ function frameBlob(video: HTMLVideoElement, quality = 0.86): Promise<Blob> {
   if (!context) return Promise.reject(new Error("Camera frame could not be prepared."));
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
   return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Camera frame could not be captured.")), "image/jpeg", quality));
+}
+
+function formatLogTime(value: string, includeDate = false): string {
+  const parsed = new Date(value.includes("T") ? value : value.replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return value || "—";
+  return parsed.toLocaleString([], includeDate
+    ? { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }
+    : { hour: "2-digit", minute: "2-digit" });
 }
 
 const navItems: { key: PageKey; label: string; icon: string }[] = [
@@ -101,10 +129,10 @@ export default function Home() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const showToast = (message: string) => {
+  const showToast = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 3000);
-  };
+  }, []);
 
   const navigate = (next: PageKey) => {
     setPage(next);
@@ -137,7 +165,7 @@ export default function Home() {
     apiRequest<Student[]>("/students")
       .then(setStudents)
       .catch(() => showToast("AI server is offline. Start the Python API to use recognition."));
-  }, []);
+  }, [showToast]);
 
   return (
     <div className="app-shell">
@@ -186,8 +214,8 @@ export default function Home() {
             showToast={showToast}
           />
         )}
-        {page === "logs" && <Logs />}
-        {page === "images" && <Images />}
+        {page === "logs" && <Logs showToast={showToast} />}
+        {page === "images" && <Images navigate={navigate} showToast={showToast} />}
         {page === "reports" && <Reports showToast={showToast} />}
         {page === "settings" && <Settings showToast={showToast} />}
       </main>
@@ -357,14 +385,128 @@ function Students({ students, setStudents, openForm, openCapture, showToast }: {
   );
 }
 
-function Logs() {
+function Logs({ showToast }: { showToast: (message: string) => void }) {
+  const [logs, setLogs] = useState<RecognitionLog[]>([]);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("ALL");
+  const [loading, setLoading] = useState(true);
+
+  const loadLogs = useCallback(async () => {
+    try {
+      setLogs(await apiRequest<RecognitionLog[]>("/logs?limit=500"));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Recognition logs could not be loaded");
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<RecognitionLog[]>("/logs?limit=500")
+      .then((data) => { if (active) setLogs(data); })
+      .catch((error) => { if (active) showToast(error instanceof Error ? error.message : "Recognition logs could not be loaded"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [showToast]);
+
+  const visibleLogs = logs.filter((log) => {
+    const matchesName = (log.student_name || "Unknown Face").toLowerCase().includes(search.toLowerCase());
+    return matchesName && (status === "ALL" || log.status === status);
+  });
+
+  const removeLog = async (log: RecognitionLog) => {
+    if (!window.confirm("Delete this recognition record?")) return;
+    try {
+      await apiRequest<{ deleted: boolean }>(`/logs/${log.log_id}`, { method: "DELETE" });
+      setLogs((current) => current.filter((item) => item.log_id !== log.log_id));
+      showToast("Recognition record deleted");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Recognition record could not be deleted");
+    }
+  };
+
+  const clearLogs = async () => {
+    if (!logs.length || !window.confirm("Delete all recognition logs and their captured images?")) return;
+    try {
+      await apiRequest<{ deleted: number }>("/logs", { method: "DELETE" });
+      setLogs([]);
+      showToast("All recognition logs deleted");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Recognition logs could not be cleared");
+    }
+  };
+
   return (
-    <><PageHeader title="Recognition Logs" subtitle="Search and review attendance activity" action={<button className="ghost-button">↻ Refresh</button>} /><div className="page-body"><section className="panel"><div className="filter-row"><input className="search-input" placeholder="Search by student name..." /><select aria-label="Filter recognition status"><option>All activity</option><option>Recognized</option><option>Unknown</option></select></div><div className="responsive-table"><table><thead><tr><th>Student</th><th>Confidence</th><th>Time</th><th>Status</th></tr></thead><tbody>{recognitionLogs.map((log, index) => <tr key={index}><td>{log.name}</td><td>{log.confidence}</td><td>{log.time}</td><td><span className={log.status === "Recognized" ? "table-status success" : "table-status unknown"}>{log.status}</span></td></tr>)}</tbody></table></div></section></div></>
+    <>
+      <PageHeader
+        title="Recognition Logs"
+        subtitle="Search and review attendance activity"
+        action={<div className="header-actions"><button className="ghost-button" onClick={() => { setLoading(true); void loadLogs(); }}>↻ Refresh</button><button className="danger-button" onClick={() => void clearLogs()} disabled={!logs.length}>Delete All</button></div>}
+      />
+      <div className="page-body">
+        <section className="panel">
+          <div className="filter-row">
+            <input className="search-input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by student name..." />
+            <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter recognition status"><option value="ALL">All activity</option><option value="RECOGNIZED">Recognized</option><option value="UNKNOWN">Unknown</option></select>
+          </div>
+          <div className="responsive-table"><table><thead><tr><th>Student</th><th>Confidence</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>
+            {visibleLogs.map((log) => <tr key={log.log_id}><td>{log.status === "UNKNOWN" ? "Unknown Face" : log.student_name}</td><td>{log.status === "RECOGNIZED" ? `${Math.round(log.confidence * 100)}%` : "—"}</td><td>{formatLogTime(log.detection_time, true)}</td><td><span className={log.status === "RECOGNIZED" ? "table-status success" : "table-status unknown"}>{log.status === "RECOGNIZED" ? "Recognized" : "Unknown"}</span></td><td><button className="table-delete" onClick={() => void removeLog(log)}>Delete</button></td></tr>)}
+            {!visibleLogs.length && <tr><td className="table-empty" colSpan={5}>{loading ? "Loading recognition logs..." : "No matching recognition activity found."}</td></tr>}
+          </tbody></table></div>
+        </section>
+      </div>
+    </>
   );
 }
 
-function Images() {
-  return <><PageHeader title="Captured Images" subtitle="View saved recognition images by date" action={<button className="ghost-button">All Dates⌄</button>} /><div className="page-body"><section className="empty-state panel"><div>▣</div><h2>No web captures yet</h2><p>Images captured through the connected recognition backend will appear here.</p><button className="primary-button">Open Live Monitoring</button></section></div></>;
+function Images({ navigate, showToast }: { navigate: (page: PageKey) => void; showToast: (message: string) => void }) {
+  const [captures, setCaptures] = useState<CaptureRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadCaptures = useCallback(async () => {
+    try {
+      setCaptures(await apiRequest<CaptureRecord[]>("/captures?limit=200"));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Captured images could not be loaded");
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<CaptureRecord[]>("/captures?limit=200")
+      .then((data) => { if (active) setCaptures(data); })
+      .catch((error) => { if (active) showToast(error instanceof Error ? error.message : "Captured images could not be loaded"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [showToast]);
+
+  const removeCapture = async (capture: CaptureRecord) => {
+    if (!window.confirm("Delete this captured image? The recognition log will be kept.")) return;
+    try {
+      await apiRequest<{ deleted: boolean }>(`/captures/${capture.id}`, { method: "DELETE" });
+      setCaptures((current) => current.filter((item) => item.id !== capture.id));
+      showToast("Captured image deleted");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Captured image could not be deleted");
+    }
+  };
+
+  return <>
+    <PageHeader title="Captured Images" subtitle="Review evidence frames saved with recognition activity" action={<button className="ghost-button" onClick={() => { setLoading(true); void loadCaptures(); }}>↻ Refresh</button>} />
+    <div className="page-body">
+      {captures.length ? <section className="capture-grid">{captures.map((capture) => <article className="capture-card" key={capture.id}>
+        <a href={`${API_URL}${capture.image_url}`} target="_blank" rel="noreferrer" className="capture-preview">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={`${API_URL}${capture.image_url}`} alt={`${capture.name} recognition capture`} loading="lazy" />
+        </a>
+        <div className="capture-info"><div><strong>{capture.status === "UNKNOWN" ? "Unknown Face" : capture.name}</strong><p>{formatLogTime(capture.captured_at, true)} · {capture.status === "RECOGNIZED" ? `${Math.round(capture.confidence * 100)}% confidence` : "Review required"}</p></div><span className={capture.status === "RECOGNIZED" ? "table-status success" : "table-status unknown"}>{capture.status === "RECOGNIZED" ? "Recognized" : "Unknown"}</span></div>
+        <div className="capture-actions"><a href={`${API_URL}${capture.image_url}`} target="_blank" rel="noreferrer">View Full</a><button onClick={() => void removeCapture(capture)}>Delete</button></div>
+      </article>)}</section> : <section className="empty-state panel"><div>▣</div><h2>{loading ? "Loading captures..." : "No web captures yet"}</h2><p>{loading ? "Connecting to the recognition backend." : "Start Live Monitoring. The next throttled recognized or unknown event will be saved here."}</p>{!loading && <button className="primary-button" onClick={() => navigate("monitoring")}>Open Live Monitoring</button>}</section>}
+    </div>
+  </>;
 }
 
 function Reports({ showToast }: { showToast: (message: string) => void }) {
