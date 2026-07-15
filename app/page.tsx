@@ -132,6 +132,25 @@ async function apiBlob(path: string): Promise<Blob> {
   return response.blob();
 }
 
+async function apiDownload(path: string): Promise<{ blob: Blob; filename: string }> {
+  const headers = new Headers();
+  const token = window.localStorage.getItem(TOKEN_KEY) || window.localStorage.getItem("face-monitor-admin-token");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_URL}${path}`, { headers });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    if (response.status === 401) {
+      window.localStorage.removeItem(TOKEN_KEY);
+      window.localStorage.removeItem(ROLE_KEY);
+      window.dispatchEvent(new Event("face-monitor-auth-expired"));
+    }
+    throw new Error(payload?.detail || `Report download failed (${response.status})`);
+  }
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "attendance-report";
+  return { blob: await response.blob(), filename };
+}
+
 function frameBlob(video: HTMLVideoElement, quality = 0.86): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = video.videoWidth || 640;
@@ -158,14 +177,6 @@ const navItems: { key: PageKey; label: string; icon: string }[] = [
   { key: "images", label: "Captured Images", icon: "▣" },
   { key: "reports", label: "Reports", icon: "↗" },
   { key: "settings", label: "System Settings", icon: "⚙" },
-];
-
-const recognitionLogs = [
-  { name: "Vijay Pal", confidence: "91%", time: "12:44 PM", status: "Recognized" },
-  { name: "Ashu Verma", confidence: "87%", time: "12:40 PM", status: "Recognized" },
-  { name: "Unknown Face", confidence: "—", time: "12:38 PM", status: "Unknown" },
-  { name: "Unknown Face", confidence: "—", time: "12:35 PM", status: "Unknown" },
-  { name: "Ashu Verma", confidence: "86%", time: "11:44 AM", status: "Recognized" },
 ];
 
 function Toast({ message }: { message: string }) {
@@ -854,12 +865,45 @@ function Images({ navigate, showToast }: { navigate: (page: PageKey) => void; sh
 }
 
 function Reports({ showToast }: { showToast: (message: string) => void }) {
-  const downloadCsv = () => {
-    const rows = ["Student,Confidence,Time,Status", ...recognitionLogs.map((log) => `${log.name},${log.confidence},${log.time},${log.status}`)];
-    const url = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" }));
-    const link = document.createElement("a"); link.href = url; link.download = "recognition-report.csv"; link.click(); URL.revokeObjectURL(url); showToast("Report downloaded successfully");
+  type ReportPeriod = "daily" | "monthly";
+  type ReportType = "xlsx" | "pdf";
+  type GeneratedReport = { period: ReportPeriod; fileType: ReportType; filename: string; generatedAt: string };
+  const [generated, setGenerated] = useState<GeneratedReport[]>([]);
+  const [downloading, setDownloading] = useState("");
+
+  const download = async (period: ReportPeriod, fileType: ReportType) => {
+    const key = `${period}-${fileType}`;
+    setDownloading(key);
+    try {
+      const { blob, filename } = await apiDownload(`/reports/${period}/${fileType}`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setGenerated((current) => [{ period, fileType, filename, generatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }, ...current.filter((item) => !(item.period === period && item.fileType === fileType))]);
+      showToast(`${fileType === "xlsx" ? "Excel" : "PDF"} report saved in Downloads`);
+    } catch (reason) {
+      showToast(reason instanceof Error ? reason.message : "Report could not be generated");
+    } finally {
+      setDownloading("");
+    }
   };
-  return <><PageHeader title="Reports" subtitle="Create and download attendance reports" /><div className="page-body"><div className="report-grid"><article className="report-card"><span>Today</span><h2>Daily Report</h2><p>Download today&apos;s recognition activity and attendance summary.</p><div><button className="primary-button" onClick={downloadCsv}>Download CSV ↗</button><button className="ghost-button" onClick={() => showToast("PDF export will connect to the Python backend")}>PDF Report</button></div></article><article className="report-card"><span>This Month</span><h2>Monthly Report</h2><p>Download a complete monthly summary for registered students.</p><div><button className="primary-button" onClick={downloadCsv}>Download CSV ↗</button><button className="ghost-button" onClick={() => showToast("PDF export will connect to the Python backend")}>PDF Report</button></div></article></div><section className="panel generated-files"><div className="card-heading"><div><h3>Generated Files</h3><p>Your browser downloads will be listed by the device.</p></div></div><div className="file-row"><span>↗</span><div><strong>Recognition report</strong><p>Ready to generate</p></div><button onClick={downloadCsv}>Download</button></div></section></div></>;
+  const reportCard = (period: ReportPeriod, label: string, title: string, description: string) => <article className="report-card">
+    <span>{label}</span><h2>{title}</h2><p>{description}</p><div>
+      <button className="primary-button" disabled={Boolean(downloading)} onClick={() => void download(period, "xlsx")}>{downloading === `${period}-xlsx` ? "Creating..." : "Excel Report ↗"}</button>
+      <button className="ghost-button" disabled={Boolean(downloading)} onClick={() => void download(period, "pdf")}>{downloading === `${period}-pdf` ? "Creating..." : "PDF Report"}</button>
+    </div>
+  </article>;
+  return <><PageHeader title="Reports" subtitle="Generate real attendance reports from the live database" /><div className="page-body">
+    <div className="report-grid">{reportCard("daily", "Today", "Daily Report", "Download today's recognized students, unknown events and attendance summary.")}{reportCard("monthly", "This Month", "Monthly Report", "Download the current month's complete attendance activity and summary.")}</div>
+    <section className="panel generated-files"><div className="card-heading"><div><h3>Generated Files</h3><p>Reports are saved in your browser&apos;s Downloads folder.</p></div><span className="report-live-badge">● Live database</span></div>
+      {generated.length ? <div className="generated-file-list">{generated.map((file) => <div className="file-row" key={`${file.period}-${file.fileType}`}><span>{file.fileType === "pdf" ? "PDF" : "XL"}</span><div><strong>{file.filename}</strong><p>Generated at {file.generatedAt} • Saved to Downloads</p></div><button disabled={Boolean(downloading)} onClick={() => void download(file.period, file.fileType)}>Download Again</button></div>)}</div> : <div className="report-empty"><span>↗</span><div><strong>No report generated in this session</strong><p>Choose Excel or PDF above. The file will appear here and in Downloads.</p></div></div>}
+    </section>
+  </div></>;
 }
 
 function Settings({ showToast }: { showToast: (message: string) => void }) {
