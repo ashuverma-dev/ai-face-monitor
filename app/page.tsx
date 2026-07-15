@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   type Dispatch,
   type FormEvent,
@@ -70,17 +71,49 @@ type HealthPayload = {
   registered_students: number;
 };
 
+type AuthMode = "checking" | "setup" | "login" | "authenticated";
+
+type AuthToken = {
+  access_token: string;
+  token_type: "bearer";
+  expires_in: number;
+};
+
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "https://ai-face-monitor-api-ashu.onrender.com"
 ).replace(/\/$/, "");
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, init);
+  const headers = new Headers(init?.headers);
+  if (typeof window !== "undefined") {
+    const token = window.localStorage.getItem("face-monitor-admin-token");
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await fetch(`${API_URL}${path}`, { ...init, headers });
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
+    if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/auth/login")) {
+      window.localStorage.removeItem("face-monitor-admin-token");
+      window.dispatchEvent(new Event("face-monitor-auth-expired"));
+    }
     throw new Error(payload?.detail || `Request failed (${response.status})`);
   }
   return response.status === 204 ? (undefined as T) : response.json();
+}
+
+async function apiBlob(path: string): Promise<Blob> {
+  const headers = new Headers();
+  const token = window.localStorage.getItem("face-monitor-admin-token");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_URL}${path}`, { headers });
+  if (!response.ok) {
+    if (response.status === 401) {
+      window.localStorage.removeItem("face-monitor-admin-token");
+      window.dispatchEvent(new Event("face-monitor-auth-expired"));
+    }
+    throw new Error(`Image request failed (${response.status})`);
+  }
+  return response.blob();
 }
 
 function frameBlob(video: HTMLVideoElement, quality = 0.86): Promise<Blob> {
@@ -111,11 +144,6 @@ const navItems: { key: PageKey; label: string; icon: string }[] = [
   { key: "settings", label: "System Settings", icon: "⚙" },
 ];
 
-const initialStudents: Student[] = [
-  { id: 10, name: "Ashu Verma", roll: "CS-010", course: "Computer Science", images: 20, ready: true },
-  { id: 12, name: "Vijay Pal", roll: "CS-012", course: "Computer Science", images: 24, ready: true },
-];
-
 const recognitionLogs = [
   { name: "Vijay Pal", confidence: "91%", time: "12:44 PM", status: "Recognized" },
   { name: "Ashu Verma", confidence: "87%", time: "12:40 PM", status: "Recognized" },
@@ -129,10 +157,61 @@ function Toast({ message }: { message: string }) {
   return <div className="toast" role="status"><span>✓</span>{message}</div>;
 }
 
+function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated: () => void }) {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  if (mode === "checking") {
+    return <main className="auth-shell"><section className="auth-card auth-loading"><div className="auth-mark">AI</div><h1>Checking secure session</h1><p>Connecting to the protected attendance system...</p><div className="auth-progress"><span /></div></section></main>;
+  }
+
+  const isSetup = mode === "setup";
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    if (isSetup && password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const token = await apiRequest<AuthToken>(isSetup ? "/auth/setup" : "/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      window.localStorage.setItem("face-monitor-admin-token", token.access_token);
+      onAuthenticated();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Admin authentication failed.");
+      setSubmitting(false);
+    }
+  };
+
+  return <main className="auth-shell">
+    <section className="auth-card">
+      <div className="auth-brand"><div className="auth-mark">AI</div><div><span>Secure administration</span><strong>AI Face Monitor</strong></div></div>
+      <div className="auth-copy"><span className="eyebrow">{isSetup ? "First-time security setup" : "Protected admin access"}</span><h1>{isSetup ? "Create Admin Password" : "Welcome back"}</h1><p>{isSetup ? "Create a strong password to protect students, recognition logs, captured images and delete actions." : "Enter your admin password to open the attendance dashboard."}</p></div>
+      <form className="auth-form" onSubmit={submit}>
+        <label>Admin username<input value="admin" readOnly aria-label="Admin username" /></label>
+        <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isSetup ? "new-password" : "current-password"} placeholder="Enter secure password" minLength={12} required /></label>
+        {isSetup && <label>Confirm password<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="Enter password again" minLength={12} required /></label>}
+        {isSetup && <p className="password-rule">Minimum 12 characters with uppercase, lowercase, number and special character.</p>}
+        {error && <p className="auth-error" role="alert">{error}</p>}
+        <button className="primary-button auth-submit" type="submit" disabled={submitting}>{submitting ? "Securing account..." : isSetup ? "Create Secure Admin" : "Log in securely"}</button>
+      </form>
+      <div className="auth-security"><span>✓</span><p>Password hashing • signed 8-hour session • protected private data</p></div>
+    </section>
+  </main>;
+}
+
 export default function Home() {
+  const [authMode, setAuthMode] = useState<AuthMode>("checking");
   const [page, setPage] = useState<PageKey>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [students, setStudents] = useState<Student[]>(initialStudents);
+  const [students, setStudents] = useState<Student[]>([]);
   const [showStudentForm, setShowStudentForm] = useState(false);
   const [toast, setToast] = useState("");
   const [cameraRunning, setCameraRunning] = useState(false);
@@ -173,10 +252,59 @@ export default function Home() {
   useEffect(() => () => streamRef.current?.getTracks().forEach((track) => track.stop()), []);
 
   useEffect(() => {
+    let active = true;
+    const checkAuthentication = async () => {
+      try {
+        const status = await apiRequest<{ configured: boolean }>("/auth/status");
+        if (!active) return;
+        if (!status.configured) {
+          setAuthMode("setup");
+          return;
+        }
+        if (!window.localStorage.getItem("face-monitor-admin-token")) {
+          setAuthMode("login");
+          return;
+        }
+        await apiRequest<{ authenticated: boolean }>("/auth/session");
+        if (active) setAuthMode("authenticated");
+      } catch {
+        if (active) setAuthMode("login");
+      }
+    };
+    void checkAuthentication();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const expireSession = () => {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setCameraRunning(false);
+      setAuthMode("login");
+    };
+    window.addEventListener("face-monitor-auth-expired", expireSession);
+    return () => window.removeEventListener("face-monitor-auth-expired", expireSession);
+  }, []);
+
+  useEffect(() => {
+    if (authMode !== "authenticated") return;
     apiRequest<Student[]>("/students")
       .then(setStudents)
       .catch(() => showToast("AI server is offline. Start the Python API to use recognition."));
-  }, [showToast]);
+  }, [authMode, showToast]);
+
+  const logout = () => {
+    window.localStorage.removeItem("face-monitor-admin-token");
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setCameraRunning(false);
+    setMenuOpen(false);
+    setAuthMode("login");
+  };
+
+  if (authMode !== "authenticated") {
+    return <AuthScreen mode={authMode} onAuthenticated={() => setAuthMode("authenticated")} />;
+  }
 
   return (
     <div className="app-shell">
@@ -202,6 +330,7 @@ export default function Home() {
         <div className="sidebar-footer">
           <div className="system-ready"><span /> System Ready</div>
           <small>Responsive Web Preview • v1.0</small>
+          <button className="logout-button" onClick={logout}>Log out</button>
         </div>
       </aside>
       {menuOpen && <button className="backdrop" aria-label="Close navigation" onClick={() => setMenuOpen(false)} />}
@@ -520,6 +649,28 @@ function Logs({ showToast }: { showToast: (message: string) => void }) {
   );
 }
 
+function SecureCapturePreview({ capture }: { capture: CaptureRecord }) {
+  const [imageUrl, setImageUrl] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    apiBlob(capture.image_url).then((blob) => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setImageUrl(objectUrl);
+    }).catch(() => { if (active) setImageUrl(""); });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [capture.image_url]);
+
+  return <a href={imageUrl || undefined} target="_blank" rel="noreferrer" className="capture-preview" aria-label={`View ${capture.name} capture`}>
+    {imageUrl ? <Image src={imageUrl} alt={`${capture.name} recognition capture`} width={640} height={480} unoptimized /> : <span className="capture-image-loading">Loading secure image...</span>}
+  </a>;
+}
+
 function Images({ navigate, showToast }: { navigate: (page: PageKey) => void; showToast: (message: string) => void }) {
   const [captures, setCaptures] = useState<CaptureRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -558,12 +709,9 @@ function Images({ navigate, showToast }: { navigate: (page: PageKey) => void; sh
     <PageHeader title="Captured Images" subtitle="Review evidence frames saved with recognition activity" action={<button className="ghost-button" onClick={() => { setLoading(true); void loadCaptures(); }}>↻ Refresh</button>} />
     <div className="page-body">
       {captures.length ? <section className="capture-grid">{captures.map((capture) => <article className="capture-card" key={capture.id}>
-        <a href={`${API_URL}${capture.image_url}`} target="_blank" rel="noreferrer" className="capture-preview">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={`${API_URL}${capture.image_url}`} alt={`${capture.name} recognition capture`} loading="lazy" />
-        </a>
+        <div className="secure-capture"><SecureCapturePreview capture={capture} /></div>
         <div className="capture-info"><div><strong>{capture.status === "UNKNOWN" ? "Unknown Face" : capture.name}</strong><p>{formatLogTime(capture.captured_at, true)} · {capture.status === "RECOGNIZED" ? `${Math.round(capture.confidence * 100)}% confidence` : "Review required"}</p></div><span className={capture.status === "RECOGNIZED" ? "table-status success" : "table-status unknown"}>{capture.status === "RECOGNIZED" ? "Recognized" : "Unknown"}</span></div>
-        <div className="capture-actions"><a href={`${API_URL}${capture.image_url}`} target="_blank" rel="noreferrer">View Full</a><button onClick={() => void removeCapture(capture)}>Delete</button></div>
+        <div className="capture-actions"><span className="capture-protected">🔒 Protected image</span><button onClick={() => void removeCapture(capture)}>Delete</button></div>
       </article>)}</section> : <section className="empty-state panel"><div>▣</div><h2>{loading ? "Loading captures..." : "No web captures yet"}</h2><p>{loading ? "Connecting to the recognition backend." : "Start Live Monitoring. The next throttled recognized or unknown event will be saved here."}</p>{!loading && <button className="primary-button" onClick={() => navigate("monitoring")}>Open Live Monitoring</button>}</section>}
     </div>
   </>;
