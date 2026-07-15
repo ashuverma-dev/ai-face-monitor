@@ -2,6 +2,7 @@
 
 import {
   type Dispatch,
+  type FormEvent,
   type ReactNode,
   type RefObject,
   type SetStateAction,
@@ -20,6 +21,34 @@ type Student = {
   images: number;
   ready: boolean;
 };
+
+type RecognitionResult = {
+  status: "RECOGNIZED" | "UNKNOWN" | "NO_FACE";
+  student_id?: number;
+  name: string | null;
+  confidence: number;
+};
+
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, init);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.detail || `Request failed (${response.status})`);
+  }
+  return response.status === 204 ? (undefined as T) : response.json();
+}
+
+function frameBlob(video: HTMLVideoElement, quality = 0.86): Promise<Blob> {
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  const context = canvas.getContext("2d");
+  if (!context) return Promise.reject(new Error("Camera frame could not be prepared."));
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Camera frame could not be captured.")), "image/jpeg", quality));
+}
 
 const navItems: { key: PageKey; label: string; icon: string }[] = [
   { key: "dashboard", label: "Dashboard", icon: "◆" },
@@ -66,6 +95,7 @@ export default function Home() {
   const [showStudentForm, setShowStudentForm] = useState(false);
   const [toast, setToast] = useState("");
   const [cameraRunning, setCameraRunning] = useState(false);
+  const [enrollStudent, setEnrollStudent] = useState<Student | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -100,6 +130,12 @@ export default function Home() {
   };
 
   useEffect(() => () => streamRef.current?.getTracks().forEach((track) => track.stop()), []);
+
+  useEffect(() => {
+    apiRequest<Student[]>("/students")
+      .then(setStudents)
+      .catch(() => showToast("AI server is offline. Start the Python API to use recognition."));
+  }, []);
 
   return (
     <div className="app-shell">
@@ -144,6 +180,7 @@ export default function Home() {
             students={students}
             setStudents={setStudents}
             openForm={() => setShowStudentForm(true)}
+            openCapture={setEnrollStudent}
             showToast={showToast}
           />
         )}
@@ -156,12 +193,28 @@ export default function Home() {
       {showStudentForm && (
         <StudentModal
           onClose={() => setShowStudentForm(false)}
-          onSave={(student) => {
-            setStudents((current) => [...current, student]);
+          onSave={async (student) => {
+            const saved = await apiRequest<Student>("/students", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: student.name, roll: student.roll, course: student.course }),
+            });
+            setStudents((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
             setShowStudentForm(false);
-            showToast("Student registered successfully");
+            showToast("Student registered. Now capture face images.");
           }}
           nextId={Math.max(...students.map((student) => student.id), 0) + 1}
+        />
+      )}
+      {enrollStudent && (
+        <EnrollmentModal
+          student={enrollStudent}
+          onClose={() => setEnrollStudent(null)}
+          onComplete={(result) => {
+            setStudents((current) => current.map((item) => item.id === enrollStudent.id ? { ...item, images: result.images, ready: result.ready } : item));
+            setEnrollStudent(null);
+            showToast(`${result.saved} face images saved. Recognition is ready.`);
+          }}
         />
       )}
     </div>
@@ -228,6 +281,42 @@ function Dashboard({ navigate }: { navigate: (page: PageKey) => void }) {
 }
 
 function Monitoring({ videoRef, running, startCamera, stopCamera }: { videoRef: RefObject<HTMLVideoElement | null>; running: boolean; startCamera: () => void; stopCamera: () => void }) {
+  const [result, setResult] = useState<RecognitionResult | null>(null);
+  const [summary, setSummary] = useState({ recognized: 0, unknown: 0, captures: 0 });
+  const [recent, setRecent] = useState<string[]>([]);
+  const requestActive = useRef(false);
+
+  useEffect(() => {
+    if (!running) return;
+    const recognize = async () => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 2 || requestActive.current) return;
+      requestActive.current = true;
+      try {
+        const blob = await frameBlob(video);
+        const form = new FormData();
+        form.append("image", blob, "camera.jpg");
+        const next = await apiRequest<RecognitionResult>("/recognize", { method: "POST", body: form });
+        setResult(next);
+        if (next.status === "RECOGNIZED") {
+          setSummary((value) => ({ ...value, recognized: value.recognized + 1, captures: value.captures + 1 }));
+          setRecent((items) => [`${next.name} • ${Math.round(next.confidence * 100)}%`, ...items].slice(0, 5));
+        } else if (next.status === "UNKNOWN") {
+          setSummary((value) => ({ ...value, unknown: value.unknown + 1, captures: value.captures + 1 }));
+        }
+      } catch (error) {
+        setResult({ status: "NO_FACE", name: error instanceof Error ? error.message : "AI server unavailable", confidence: 0 });
+      } finally {
+        requestActive.current = false;
+      }
+    };
+    recognize();
+    const timer = window.setInterval(recognize, 1400);
+    return () => window.clearInterval(timer);
+  }, [running, videoRef]);
+
+  const statusText = !running ? "Waiting" : result?.status === "RECOGNIZED" ? "Verified" : result?.status === "UNKNOWN" ? "Unknown face" : result?.name?.toLowerCase().includes("server") ? "AI server offline" : "Looking for a face";
+  const displayName = !running ? "—" : result?.status === "NO_FACE" ? "Scanning..." : result?.name || "Scanning...";
   return (
     <>
       <PageHeader title="Live Monitoring" subtitle="Real-time browser camera preview and attendance" action={<div className="header-actions"><span className={running ? "live-status running" : "live-status"}>● {running ? "Running" : "Stopped"}</span><button className="primary-button small" onClick={running ? stopCamera : startCamera}>{running ? "■ Stop" : "▶ Start"}</button></div>} />
@@ -238,20 +327,30 @@ function Monitoring({ videoRef, running, startCamera, stopCamera }: { videoRef: 
           {running && <div className="scanner-line" />}
         </section>
         <aside className="detection-panel">
-          <span className="eyebrow">Current Detection</span><h2>{running ? "Scanning..." : "—"}</h2><p>Confidence: —</p><p>Status: {running ? "Camera active" : "Waiting"}</p>
-          <hr /><h3>Session Summary</h3><div className="metric-line good"><span>Recognized</span><strong>0</strong></div><div className="metric-line bad"><span>Unknown</span><strong>0</strong></div><div className="metric-line"><span>Captures</span><strong>0</strong></div>
-          <hr /><h3>Recent Recognitions</h3><div className="empty-list">Recognition events will appear here.</div>
+          <span className="eyebrow">Current Detection</span><h2 className={result?.status === "RECOGNIZED" ? "detection-good" : result?.status === "UNKNOWN" ? "detection-bad" : ""}>{displayName}</h2><p>Confidence: {result?.status === "RECOGNIZED" ? `${Math.round(result.confidence * 100)}%` : "—"}</p><p>Status: {statusText}</p>
+          <hr /><h3>Session Summary</h3><div className="metric-line good"><span>Recognized</span><strong>{summary.recognized}</strong></div><div className="metric-line bad"><span>Unknown</span><strong>{summary.unknown}</strong></div><div className="metric-line"><span>Captures</span><strong>{summary.captures}</strong></div>
+          <hr /><h3>Recent Recognitions</h3>{recent.length ? recent.map((item, index) => <div className="recent-detection" key={`${item}-${index}`}>{item}</div>) : <div className="empty-list">Recognition events will appear here.</div>}
         </aside>
       </div>
     </>
   );
 }
 
-function Students({ students, setStudents, openForm, showToast }: { students: Student[]; setStudents: Dispatch<SetStateAction<Student[]>>; openForm: () => void; showToast: (message: string) => void }) {
+function Students({ students, setStudents, openForm, openCapture, showToast }: { students: Student[]; setStudents: Dispatch<SetStateAction<Student[]>>; openForm: () => void; openCapture: (student: Student) => void; showToast: (message: string) => void }) {
+  const removeStudent = async (student: Student) => {
+    if (!window.confirm(`Delete ${student.name} and all saved face data?`)) return;
+    try {
+      await apiRequest<{ deleted: boolean }>(`/students/${student.id}`, { method: "DELETE" });
+      setStudents((all) => all.filter((item) => item.id !== student.id));
+      showToast("Student and face data deleted");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Student could not be deleted");
+    }
+  };
   return (
     <>
       <PageHeader title="Student Management" subtitle="Register students and manage face profiles" action={<button className="primary-button small" onClick={openForm}>+ Add Student</button>} />
-      <div className="page-body"><section className="panel students-panel"><div className="card-heading"><div><h3>Registered Students</h3><p>{students.length} student profiles</p></div><input className="search-input" placeholder="Search students..." /></div><div className="student-list">{students.map((student) => <article className="student-row" key={student.id}><div className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</div><div className="student-info"><strong>{student.name}</strong><p>{student.roll} • {student.course}</p></div><span className="ready-badge">● Ready • {student.images} images</span><div className="row-actions"><button onClick={() => showToast("Capture will use the desktop AI backend")}>Capture</button><button className="danger-link" onClick={() => { setStudents((all) => all.filter((item) => item.id !== student.id)); showToast("Student removed from this web preview"); }}>Delete</button></div></article>)}</div></section></div>
+      <div className="page-body"><section className="panel students-panel"><div className="card-heading"><div><h3>Registered Students</h3><p>{students.length} student profiles</p></div><input className="search-input" placeholder="Search students..." /></div><div className="student-list">{students.map((student) => <article className="student-row" key={student.id}><div className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</div><div className="student-info"><strong>{student.name}</strong><p>{student.roll} • {student.course}</p></div><span className={student.ready ? "ready-badge" : "ready-badge pending"}>● {student.ready ? "Ready" : "Face needed"} • {student.images} images</span><div className="row-actions"><button onClick={() => openCapture(student)}>Capture</button><button className="danger-link" onClick={() => removeStudent(student)}>Delete</button></div></article>)}</div></section></div>
     </>
   );
 }
@@ -280,7 +379,61 @@ function Settings({ showToast }: { showToast: (message: string) => void }) {
   return <><PageHeader title="System Settings" subtitle="Configure recognition and web preferences" /><div className="page-body settings-grid"><section className="panel setting-card"><span className="eyebrow">Recognition</span><h2>Matching Threshold</h2><p>Adjust how strict face matching should be.</p><div className="range-label"><span>Balanced</span><strong>{threshold}%</strong></div><input type="range" min="30" max="95" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} /></section><section className="panel setting-card"><span className="eyebrow">Camera</span><h2>Browser Camera</h2><p>Camera permission is requested only when Live Monitoring starts.</p><label className="switch-row"><span>Mirror preview</span><input type="checkbox" defaultChecked /></label><label className="switch-row"><span>Show scan effect</span><input type="checkbox" defaultChecked /></label></section><section className="panel setting-card"><span className="eyebrow">Data</span><h2>Web Preview Data</h2><p>This first web version keeps demo data on the current device.</p><button className="primary-button" onClick={() => showToast("Settings saved on this device")}>Save Settings</button></section><section className="panel setting-card system-info"><span className="eyebrow">System</span><h2>Technology</h2><p>Responsive React interface prepared for a Python recognition API.</p><ul><li>Responsive web frontend</li><li>Browser camera access</li><li>Python API ready architecture</li></ul></section></div></>;
 }
 
-function StudentModal({ onClose, onSave, nextId }: { onClose: () => void; onSave: (student: Student) => void; nextId: number }) {
+function StudentModal({ onClose, onSave, nextId }: { onClose: () => void; onSave: (student: Student) => Promise<void>; nextId: number }) {
   const [name, setName] = useState(""); const [roll, setRoll] = useState(""); const [course, setCourse] = useState("Computer Science");
-  return <div className="modal-backdrop"><form className="modal" onSubmit={(event) => { event.preventDefault(); if (name && roll) onSave({ id: nextId, name, roll, course, images: 0, ready: false }); }}><div className="modal-heading"><div><span className="eyebrow">New Profile</span><h2>Register Student</h2></div><button type="button" onClick={onClose}>×</button></div><label>Student name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Enter full name" required /></label><label>Roll number<input value={roll} onChange={(event) => setRoll(event.target.value)} placeholder="Enter roll number" required /></label><label>Department<select value={course} onChange={(event) => setCourse(event.target.value)}><option>Computer Science</option><option>Information Technology</option><option>Business Administration</option><option>Other</option></select></label><div className="modal-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit">Register Student</button></div></form></div>;
+  const [saving, setSaving] = useState(false); const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true); setError("");
+    try { await onSave({ id: nextId, name, roll, course, images: 0, ready: false }); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Student could not be saved."); setSaving(false); }
+  };
+  return <div className="modal-backdrop"><form className="modal" onSubmit={submit}><div className="modal-heading"><div><span className="eyebrow">New Profile</span><h2>Register Student</h2></div><button type="button" onClick={onClose}>×</button></div><label>Student name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Enter full name" required /></label><label>Roll number<input value={roll} onChange={(event) => setRoll(event.target.value)} placeholder="Enter roll number" required /></label><label>Department<select value={course} onChange={(event) => setCourse(event.target.value)}><option>Computer Science</option><option>Information Technology</option><option>Business Administration</option><option>Other</option></select></label>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving..." : "Register Student"}</button></div></form></div>;
+}
+
+function EnrollmentModal({ student, onClose, onComplete }: { student: Student; onClose: () => void; onComplete: (result: { saved: number; images: number; ready: boolean }) => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [frames, setFrames] = useState<Blob[]>([]);
+  const [status, setStatus] = useState("Starting camera...");
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false })
+      .then((stream) => {
+        if (!active) return stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+        setStatus("Center your face and capture 6 clear angles.");
+      })
+      .catch(() => setStatus("Camera permission is required."));
+    return () => { active = false; streamRef.current?.getTracks().forEach((track) => track.stop()); };
+  }, []);
+
+  const capture = async () => {
+    if (!videoRef.current || frames.length >= 8) return;
+    try {
+      const blob = await frameBlob(videoRef.current, 0.92);
+      setFrames((items) => [...items, blob]);
+      setStatus(frames.length + 1 >= 6 ? "Enough images captured. Save the face profile." : "Good. Turn your head slightly and capture again.");
+    } catch (reason) { setStatus(reason instanceof Error ? reason.message : "Capture failed."); }
+  };
+
+  const upload = async () => {
+    if (frames.length < 3) return setStatus("Capture at least 3 clear face images.");
+    setUploading(true); setStatus("AI is checking and saving the face profile...");
+    const form = new FormData();
+    frames.forEach((frame, index) => form.append("images", frame, `face-${index + 1}.jpg`));
+    try {
+      const result = await apiRequest<{ saved: number; images: number; ready: boolean }>(`/students/${student.id}/enroll`, { method: "POST", body: form });
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      onComplete(result);
+    } catch (reason) {
+      setStatus(reason instanceof Error ? reason.message : "Face images could not be saved.");
+      setUploading(false);
+    }
+  };
+
+  return <div className="modal-backdrop"><div className="modal enrollment-modal"><div className="modal-heading"><div><span className="eyebrow">AI Face Enrollment</span><h2>{student.name}</h2></div><button type="button" onClick={onClose}>×</button></div><div className="enrollment-camera"><video ref={videoRef} autoPlay playsInline muted /><div className="face-guide" /></div><p className="enrollment-status">{status}</p><div className="capture-progress"><span style={{ width: `${Math.min(frames.length / 6, 1) * 100}%` }} /></div><div className="enrollment-count">{frames.length} / 6 images</div><div className="modal-actions"><button type="button" className="ghost-button" onClick={() => setFrames([])} disabled={!frames.length || uploading}>Reset</button><button type="button" className="ghost-button" onClick={capture} disabled={uploading || frames.length >= 8}>Capture</button><button type="button" className="primary-button" onClick={upload} disabled={frames.length < 3 || uploading}>{uploading ? "AI Processing..." : "Save Face Profile"}</button></div></div></div>;
 }

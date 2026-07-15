@@ -108,6 +108,9 @@ button { cursor: pointer; }
 .camera-placeholder span { display: block; color: var(--lavender); font-size: 42px; margin-bottom: 15px; }
 .camera-placeholder strong { display: block; color: var(--text); font-size: 17px; }
 .camera-placeholder p { font-size: 10px; }
+.detection-good { color: var(--green); }
+.detection-bad { color: #ff667e; }
+.recent-detection { margin-top: 7px; padding: 9px 10px; border: 1px solid rgba(166,99,204,.18); border-radius: 9px; color: var(--text); background: rgba(111,45,189,.1); font-size: 9px; font-weight: 700; }
 .scanner-line { position: absolute; z-index: 3; left: 5%; right: 5%; height: 2px; background: var(--lavender); box-shadow: 0 0 18px var(--lavender); animation: scan 2.8s ease-in-out infinite; }
 @keyframes scan { 0%,100% { top: 10%; opacity: .4; } 50% { top: 90%; opacity: 1; } }
 .detection-panel { border-radius: 20px; padding: 20px; }
@@ -127,6 +130,7 @@ button { cursor: pointer; }
 .student-row { min-height: 72px; padding: 10px 12px; display: flex; align-items: center; gap: 12px; border: 1px solid rgba(166,99,204,.16); border-radius: 13px; background: rgba(33,19,49,.48); }
 .avatar { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: 0 0 auto; background: linear-gradient(135deg, var(--primary), var(--lavender)); font-size: 11px; font-weight: 900; }
 .student-info { flex: 1; min-width: 130px; } .student-info strong { font-size: 11px; } .student-info p { color: var(--muted); font-size: 9px; margin: 4px 0 0; }
+.ready-badge.pending { color: #ffbd4a; background: rgba(255,189,74,.1); }
 .ready-badge { padding: 8px 10px; border-radius: 9px; color: var(--green); background: rgba(143,214,176,.09); font-size: 9px; font-weight: 800; }
 .row-actions { display: flex; gap: 6px; }
 .row-actions button, .file-row button { min-height: 31px; padding: 0 11px; border-radius: 8px; border: 1px solid rgba(166,99,204,.25); color: var(--lavender); background: rgba(166,99,204,.08); font-size: 9px; font-weight: 800; }
@@ -168,6 +172,15 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 20px; }
 .toast { position: fixed; z-index: 200; right: 22px; bottom: 22px; max-width: 360px; padding: 14px 18px; display: flex; gap: 10px; align-items: center; border: 1px solid var(--lavender); border-radius: 13px; color: var(--text); background: rgba(33,19,49,.96); box-shadow: 0 20px 55px rgba(0,0,0,.35); font-size: 10px; font-weight: 800; animation: toast-in .3s ease; }
 .toast span { color: var(--green); }
+.form-error { margin: 0; color: #ff8595; font-size: 10px; font-weight: 700; }
+.enrollment-modal { width: min(94vw, 620px); }
+.enrollment-camera { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; border: 1px solid rgba(166,99,204,.38); border-radius: 16px; background: #08050d; }
+.enrollment-camera video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.face-guide { position: absolute; left: 50%; top: 50%; width: 43%; height: 69%; transform: translate(-50%, -50%); border: 2px solid rgba(193,112,243,.9); border-radius: 48%; box-shadow: 0 0 24px rgba(166,99,204,.35), inset 0 0 24px rgba(166,99,204,.08); }
+.enrollment-status { min-height: 18px; margin: 12px 0 7px; color: var(--muted); font-size: 10px; text-align: center; }
+.capture-progress { height: 6px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.08); }
+.capture-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--primary), var(--lavender)); transition: width .3s ease; }
+.enrollment-count { margin-top: 7px; color: var(--lavender); font-size: 9px; font-weight: 800; text-align: center; }
 @keyframes toast-in { from { transform: translateY(16px); opacity: 0; } }
 
 @media (max-width: 1050px) {
