@@ -22,6 +22,7 @@ type Student = {
   course: string;
   images: number;
   ready: boolean;
+  portal_enabled?: boolean;
 };
 
 type RecognitionResult = {
@@ -72,12 +73,23 @@ type HealthPayload = {
 };
 
 type AuthMode = "checking" | "setup" | "login" | "authenticated";
+type UserRole = "admin" | "student";
 
 type AuthToken = {
   access_token: string;
   token_type: "bearer";
   expires_in: number;
+  role?: UserRole;
 };
+
+type StudentPortalPayload = {
+  student: { id: number; name: string; roll: string; course: string; semester: string };
+  summary: { recorded_days: number; this_month: number; total_check_ins: number; last_seen: string | null };
+  attendance: { id: number; confidence: number; detected_at: string; status: string }[];
+};
+
+const TOKEN_KEY = "face-monitor-session-token";
+const ROLE_KEY = "face-monitor-session-role";
 
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "https://ai-face-monitor-api-ashu.onrender.com"
@@ -86,13 +98,15 @@ const API_URL = (
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (typeof window !== "undefined") {
-    const token = window.localStorage.getItem("face-monitor-admin-token");
+    const token = window.localStorage.getItem(TOKEN_KEY) || window.localStorage.getItem("face-monitor-admin-token");
     if (token) headers.set("Authorization", `Bearer ${token}`);
   }
   const response = await fetch(`${API_URL}${path}`, { ...init, headers });
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/auth/login")) {
+    if (response.status === 401 && typeof window !== "undefined" && !path.endsWith("/auth/login")) {
+      window.localStorage.removeItem(TOKEN_KEY);
+      window.localStorage.removeItem(ROLE_KEY);
       window.localStorage.removeItem("face-monitor-admin-token");
       window.dispatchEvent(new Event("face-monitor-auth-expired"));
     }
@@ -103,11 +117,13 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 async function apiBlob(path: string): Promise<Blob> {
   const headers = new Headers();
-  const token = window.localStorage.getItem("face-monitor-admin-token");
+  const token = window.localStorage.getItem(TOKEN_KEY) || window.localStorage.getItem("face-monitor-admin-token");
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(`${API_URL}${path}`, { headers });
   if (!response.ok) {
     if (response.status === 401) {
+      window.localStorage.removeItem(TOKEN_KEY);
+      window.localStorage.removeItem(ROLE_KEY);
       window.localStorage.removeItem("face-monitor-admin-token");
       window.dispatchEvent(new Event("face-monitor-auth-expired"));
     }
@@ -157,7 +173,9 @@ function Toast({ message }: { message: string }) {
   return <div className="toast" role="status"><span>✓</span>{message}</div>;
 }
 
-function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated: () => void }) {
+function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated: (role: UserRole) => void }) {
+  const [loginRole, setLoginRole] = useState<UserRole>("admin");
+  const [roll, setRoll] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
@@ -168,6 +186,7 @@ function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated
   }
 
   const isSetup = mode === "setup";
+  const activeRole: UserRole = isSetup ? "admin" : loginRole;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
@@ -177,15 +196,19 @@ function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated
     }
     setSubmitting(true);
     try {
-      const token = await apiRequest<AuthToken>(isSetup ? "/auth/setup" : "/auth/login", {
+      const path = isSetup ? "/auth/setup" : activeRole === "student" ? "/student/auth/login" : "/auth/login";
+      const body = activeRole === "student" ? { roll, password } : { password };
+      const token = await apiRequest<AuthToken>(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify(body),
       });
-      window.localStorage.setItem("face-monitor-admin-token", token.access_token);
-      onAuthenticated();
+      window.localStorage.setItem(TOKEN_KEY, token.access_token);
+      window.localStorage.setItem(ROLE_KEY, activeRole);
+      window.localStorage.removeItem("face-monitor-admin-token");
+      onAuthenticated(activeRole);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Admin authentication failed.");
+      setError(reason instanceof Error ? reason.message : "Login failed.");
       setSubmitting(false);
     }
   };
@@ -193,22 +216,27 @@ function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated
   return <main className="auth-shell">
     <section className="auth-card">
       <div className="auth-brand"><div className="auth-mark">AI</div><div><span>Secure administration</span><strong>AI Face Monitor</strong></div></div>
-      <div className="auth-copy"><span className="eyebrow">{isSetup ? "First-time security setup" : "Protected admin access"}</span><h1>{isSetup ? "Create Admin Password" : "Welcome back"}</h1><p>{isSetup ? "Create a strong password to protect students, recognition logs, captured images and delete actions." : "Enter your admin password to open the attendance dashboard."}</p></div>
+      {!isSetup && <div className="auth-role-tabs" role="tablist" aria-label="Choose login type">
+        <button type="button" className={loginRole === "admin" ? "active" : ""} onClick={() => { setLoginRole("admin"); setError(""); }}>Teacher / Admin</button>
+        <button type="button" className={loginRole === "student" ? "active" : ""} onClick={() => { setLoginRole("student"); setError(""); }}>Student</button>
+      </div>}
+      <div className="auth-copy"><span className="eyebrow">{isSetup ? "First-time security setup" : activeRole === "student" ? "Private student access" : "Protected admin access"}</span><h1>{isSetup ? "Create Admin Password" : activeRole === "student" ? "Student Portal" : "Welcome back"}</h1><p>{isSetup ? "Create a strong password to protect students, recognition logs, captured images and delete actions." : activeRole === "student" ? "Use the roll number and portal password provided by your teacher." : "Enter your admin password to open the attendance dashboard."}</p></div>
       <form className="auth-form" onSubmit={submit}>
-        <label>Admin username<input value="admin" readOnly aria-label="Admin username" /></label>
-        <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isSetup ? "new-password" : "current-password"} placeholder="Enter secure password" minLength={12} required /></label>
+        {activeRole === "admin" ? <label>Admin username<input value="admin" readOnly aria-label="Admin username" /></label> : <label>Roll number<input value={roll} onChange={(event) => setRoll(event.target.value)} autoComplete="username" placeholder="Enter your roll number" required /></label>}
+        <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isSetup ? "new-password" : "current-password"} placeholder="Enter secure password" minLength={activeRole === "student" ? 8 : 12} required /></label>
         {isSetup && <label>Confirm password<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="Enter password again" minLength={12} required /></label>}
         {isSetup && <p className="password-rule">Minimum 12 characters with uppercase, lowercase, number and special character.</p>}
         {error && <p className="auth-error" role="alert">{error}</p>}
-        <button className="primary-button auth-submit" type="submit" disabled={submitting}>{submitting ? "Securing account..." : isSetup ? "Create Secure Admin" : "Log in securely"}</button>
+        <button className="primary-button auth-submit" type="submit" disabled={submitting}>{submitting ? "Signing in..." : isSetup ? "Create Secure Admin" : activeRole === "student" ? "Open My Attendance" : "Log in securely"}</button>
       </form>
-      <div className="auth-security"><span>✓</span><p>Password hashing • signed 8-hour session • protected private data</p></div>
+      <div className="auth-security"><span>✓</span><p>{activeRole === "student" ? "You can only view your own profile and attendance." : "Password hashing • signed 8-hour session • protected private data"}</p></div>
     </section>
   </main>;
 }
 
 export default function Home() {
   const [authMode, setAuthMode] = useState<AuthMode>("checking");
+  const [role, setRole] = useState<UserRole | null>(null);
   const [page, setPage] = useState<PageKey>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
@@ -216,6 +244,7 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [cameraRunning, setCameraRunning] = useState(false);
   const [enrollStudent, setEnrollStudent] = useState<Student | null>(null);
+  const [portalStudent, setPortalStudent] = useState<Student | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -261,12 +290,22 @@ export default function Home() {
           setAuthMode("setup");
           return;
         }
-        if (!window.localStorage.getItem("face-monitor-admin-token")) {
+        const legacyToken = window.localStorage.getItem("face-monitor-admin-token");
+        const token = window.localStorage.getItem(TOKEN_KEY) || legacyToken;
+        const storedRole = (window.localStorage.getItem(ROLE_KEY) || (legacyToken ? "admin" : "")) as UserRole;
+        if (!token || !["admin", "student"].includes(storedRole)) {
           setAuthMode("login");
           return;
         }
-        await apiRequest<{ authenticated: boolean }>("/auth/session");
-        if (active) setAuthMode("authenticated");
+        if (legacyToken && !window.localStorage.getItem(TOKEN_KEY)) {
+          window.localStorage.setItem(TOKEN_KEY, legacyToken);
+          window.localStorage.setItem(ROLE_KEY, "admin");
+        }
+        await apiRequest<{ authenticated: boolean }>(storedRole === "student" ? "/student/auth/session" : "/auth/session");
+        if (active) {
+          setRole(storedRole);
+          setAuthMode("authenticated");
+        }
       } catch {
         if (active) setAuthMode("login");
       }
@@ -280,6 +319,7 @@ export default function Home() {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       setCameraRunning(false);
+      setRole(null);
       setAuthMode("login");
     };
     window.addEventListener("face-monitor-auth-expired", expireSession);
@@ -287,23 +327,30 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (authMode !== "authenticated") return;
+    if (authMode !== "authenticated" || role !== "admin") return;
     apiRequest<Student[]>("/students")
       .then(setStudents)
       .catch(() => showToast("AI server is offline. Start the Python API to use recognition."));
-  }, [authMode, showToast]);
+  }, [authMode, role, showToast]);
 
   const logout = () => {
+    window.localStorage.removeItem(TOKEN_KEY);
+    window.localStorage.removeItem(ROLE_KEY);
     window.localStorage.removeItem("face-monitor-admin-token");
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     setCameraRunning(false);
     setMenuOpen(false);
+    setRole(null);
     setAuthMode("login");
   };
 
   if (authMode !== "authenticated") {
-    return <AuthScreen mode={authMode} onAuthenticated={() => setAuthMode("authenticated")} />;
+    return <AuthScreen mode={authMode} onAuthenticated={(authenticatedRole) => { setRole(authenticatedRole); setAuthMode("authenticated"); }} />;
+  }
+
+  if (role === "student") {
+    return <StudentPortal onLogout={logout} />;
   }
 
   return (
@@ -351,6 +398,7 @@ export default function Home() {
             setStudents={setStudents}
             openForm={() => setShowStudentForm(true)}
             openCapture={setEnrollStudent}
+            openPortal={setPortalStudent}
             showToast={showToast}
           />
         )}
@@ -387,8 +435,96 @@ export default function Home() {
           }}
         />
       )}
+      {portalStudent && (
+        <StudentPasswordModal
+          student={portalStudent}
+          onClose={() => setPortalStudent(null)}
+          onSaved={() => {
+            setStudents((current) => current.map((item) => item.id === portalStudent.id ? { ...item, portal_enabled: true } : item));
+            setPortalStudent(null);
+            showToast("Student portal password saved securely.");
+          }}
+        />
+      )}
     </div>
   );
+}
+
+function StudentPortal({ onLogout }: { onLogout: () => void }) {
+  const [data, setData] = useState<StudentPortalPayload | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<StudentPortalPayload>("/student/me")
+      .then((payload) => { if (active) setData(payload); })
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Attendance could not be loaded."); });
+    return () => { active = false; };
+  }, []);
+
+  if (!data) {
+    return <main className="student-portal-shell"><section className="student-loading panel"><div className="auth-mark">AI</div><h1>{error || "Loading your attendance..."}</h1>{error && <button className="ghost-button" onClick={onLogout}>Back to login</button>}</section></main>;
+  }
+
+  const initials = data.student.name.split(" ").map((word) => word[0]).join("").slice(0, 2);
+  return <main className="student-portal-shell">
+    <header className="student-portal-header">
+      <div className="mobile-brand"><span>AI</span><div><strong>Student Attendance</strong><small>Private portal</small></div></div>
+      <button className="logout-button" onClick={onLogout}>Log out</button>
+    </header>
+    <section className="student-welcome panel">
+      <div className="student-profile-avatar">{initials}</div>
+      <div><span className="eyebrow">Student profile</span><h1>Welcome, {data.student.name}</h1><p>{data.student.roll} • {data.student.course}{data.student.semester ? ` • ${data.student.semester}` : ""}</p></div>
+      <span className="student-private-badge">✓ Your private view</span>
+    </section>
+    <section className="student-summary-grid">
+      <article className="panel"><span>Recorded Days</span><strong>{data.summary.recorded_days}</strong><p>Unique attendance days</p></article>
+      <article className="panel"><span>This Month</span><strong>{data.summary.this_month}</strong><p>Days recorded this month</p></article>
+      <article className="panel"><span>Total Check-ins</span><strong>{data.summary.total_check_ins}</strong><p>Successful face matches</p></article>
+      <article className="panel"><span>Last Seen</span><strong className="student-last-seen">{data.summary.last_seen ? formatLogTime(data.summary.last_seen, true) : "Not recorded"}</strong><p>Latest attendance event</p></article>
+    </section>
+    <section className="panel student-attendance-card">
+      <div className="card-heading"><div><h2>My Attendance History</h2><p>Only your verified recognition records are shown.</p></div><span className="student-record-count">{data.attendance.length} records</span></div>
+      <div className="responsive-table"><table><thead><tr><th>Date & Time</th><th>Confidence</th><th>Status</th></tr></thead><tbody>
+        {data.attendance.map((record) => <tr key={record.id}><td>{formatLogTime(record.detected_at, true)}</td><td>{Math.round(record.confidence * 100)}%</td><td><span className="table-status success">Present</span></td></tr>)}
+        {!data.attendance.length && <tr><td className="table-empty" colSpan={3}>No attendance has been recorded yet.</td></tr>}
+      </tbody></table></div>
+    </section>
+  </main>;
+}
+
+function StudentPasswordModal({ student, onClose, onSaved }: { student: Student; onClose: () => void; onSaved: () => void }) {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (password !== confirmPassword) return setError("Passwords do not match.");
+    setSaving(true); setError("");
+    try {
+      await apiRequest(`/students/${student.id}/portal-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      onSaved();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Student login could not be created.");
+      setSaving(false);
+    }
+  };
+
+  return <div className="modal-backdrop"><form className="modal" onSubmit={submit}>
+    <div className="modal-heading"><div><span className="eyebrow">Student portal access</span><h2>{student.portal_enabled ? "Reset Login Password" : "Create Student Login"}</h2></div><button type="button" onClick={onClose}>×</button></div>
+    <div className="portal-student-summary"><span className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</span><div><strong>{student.name}</strong><p>Login ID: {student.roll}</p></div></div>
+    <label>New password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} autoComplete="new-password" placeholder="At least 8 characters" required /></label>
+    <label>Confirm password<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength={8} autoComplete="new-password" placeholder="Enter password again" required /></label>
+    <p className="password-rule">Use at least 8 characters containing letters and numbers. Share it privately with this student.</p>
+    {error && <p className="auth-error" role="alert">{error}</p>}
+    <div className="modal-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving securely..." : "Save Student Login"}</button></div>
+  </form></div>;
 }
 
 function PageHeader({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
@@ -555,7 +691,7 @@ function Monitoring({ videoRef, running, startCamera, stopCamera }: { videoRef: 
   );
 }
 
-function Students({ students, setStudents, openForm, openCapture, showToast }: { students: Student[]; setStudents: Dispatch<SetStateAction<Student[]>>; openForm: () => void; openCapture: (student: Student) => void; showToast: (message: string) => void }) {
+function Students({ students, setStudents, openForm, openCapture, openPortal, showToast }: { students: Student[]; setStudents: Dispatch<SetStateAction<Student[]>>; openForm: () => void; openCapture: (student: Student) => void; openPortal: (student: Student) => void; showToast: (message: string) => void }) {
   const removeStudent = async (student: Student) => {
     if (!window.confirm(`Delete ${student.name} and all saved face data?`)) return;
     try {
@@ -569,7 +705,7 @@ function Students({ students, setStudents, openForm, openCapture, showToast }: {
   return (
     <>
       <PageHeader title="Student Management" subtitle="Register students and manage face profiles" action={<button className="primary-button small" onClick={openForm}>+ Add Student</button>} />
-      <div className="page-body"><section className="panel students-panel"><div className="card-heading"><div><h3>Registered Students</h3><p>{students.length} student profiles</p></div><input className="search-input" placeholder="Search students..." /></div><div className="student-list">{students.map((student) => <article className="student-row" key={student.id}><div className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</div><div className="student-info"><strong>{student.name}</strong><p>{student.roll} • {student.course}</p></div><span className={student.ready ? "ready-badge" : "ready-badge pending"}>● {student.ready ? "Ready" : "Face needed"} • {student.images} images</span><div className="row-actions"><button onClick={() => openCapture(student)}>Capture</button><button className="danger-link" onClick={() => removeStudent(student)}>Delete</button></div></article>)}</div></section></div>
+      <div className="page-body"><section className="panel students-panel"><div className="card-heading"><div><h3>Registered Students</h3><p>{students.length} student profiles</p></div><input className="search-input" placeholder="Search students..." /></div><div className="student-list">{students.map((student) => <article className="student-row" key={student.id}><div className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</div><div className="student-info"><strong>{student.name}</strong><p>{student.roll} • {student.course}</p></div><span className={student.ready ? "ready-badge" : "ready-badge pending"}>● {student.ready ? "Ready" : "Face needed"} • {student.images} images</span><div className="row-actions"><button onClick={() => openPortal(student)}>{student.portal_enabled ? "Reset Login" : "Create Login"}</button><button onClick={() => openCapture(student)}>Capture</button><button className="danger-link" onClick={() => removeStudent(student)}>Delete</button></div></article>)}</div></section></div>
     </>
   );
 }
