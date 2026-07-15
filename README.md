@@ -1,6 +1,7 @@
-# AI Face Monitor — Netlify Edition
+# AI Face Monitor Frontend
 
-Responsive static Next.js frontend prepared for Netlify.
+Responsive Next.js interface deployed on Netlify. All browser UI, styles,
+public assets and frontend tests live in this folder.
 
 ## Local development
 
@@ -8,6 +9,9 @@ Responsive static Next.js frontend prepared for Netlify.
 npm install
 npm run dev
 ```
+
+Copy `.env.example` to `.env.local` when you want the UI to use a local API.
+Without that override, production uses the hosted Render backend.
 
 ## Production validation
 
