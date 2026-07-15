@@ -49,6 +49,27 @@ type CaptureRecord = {
   image_url: string;
 };
 
+type DashboardPayload = {
+  stats: {
+    total_students: number;
+    today_detections: number;
+    today_recognized: number;
+    today_unknown: number;
+    total_detections: number;
+    avg_confidence: number;
+  };
+  trend: { date: string; recognized: number; unknown: number }[];
+  recent: RecognitionLog[];
+};
+
+type HealthPayload = {
+  status: string;
+  model: string;
+  database: string;
+  persistence: string;
+  registered_students: number;
+};
+
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "https://ai-face-monitor-api-ashu.onrender.com"
 ).replace(/\/$/, "");
@@ -101,16 +122,6 @@ const recognitionLogs = [
   { name: "Unknown Face", confidence: "—", time: "12:38 PM", status: "Unknown" },
   { name: "Unknown Face", confidence: "—", time: "12:35 PM", status: "Unknown" },
   { name: "Ashu Verma", confidence: "86%", time: "11:44 AM", status: "Recognized" },
-];
-
-const trendData = [
-  { day: "Wed", recognized: 35, unknown: 15 },
-  { day: "Thu", recognized: 52, unknown: 10 },
-  { day: "Fri", recognized: 44, unknown: 20 },
-  { day: "Sat", recognized: 18, unknown: 8 },
-  { day: "Sun", recognized: 12, unknown: 4 },
-  { day: "Mon", recognized: 70, unknown: 18 },
-  { day: "Tue", recognized: 62, unknown: 22 },
 ];
 
 function Toast({ message }: { message: string }) {
@@ -196,7 +207,7 @@ export default function Home() {
       {menuOpen && <button className="backdrop" aria-label="Close navigation" onClick={() => setMenuOpen(false)} />}
 
       <main className="main-content">
-        {page === "dashboard" && <Dashboard navigate={navigate} />}
+        {page === "dashboard" && <Dashboard navigate={navigate} showToast={showToast} />}
         {page === "monitoring" && (
           <Monitoring
             videoRef={videoRef}
@@ -260,49 +271,98 @@ function PageHeader({ title, subtitle, action }: { title: string; subtitle: stri
   );
 }
 
-function Dashboard({ navigate }: { navigate: (page: PageKey) => void }) {
+function Dashboard({ navigate, showToast }: { navigate: (page: PageKey) => void; showToast: (message: string) => void }) {
+  const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
+  const [health, setHealth] = useState<HealthPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadDashboard = useCallback(async () => {
+    try {
+      const [dashboardData, healthData] = await Promise.all([
+        apiRequest<DashboardPayload>("/dashboard"),
+        apiRequest<HealthPayload>("/health"),
+      ]);
+      setDashboard(dashboardData);
+      setHealth(healthData);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Dashboard data could not be loaded");
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      apiRequest<DashboardPayload>("/dashboard"),
+      apiRequest<HealthPayload>("/health"),
+    ]).then(([dashboardData, healthData]) => {
+      if (!active) return;
+      setDashboard(dashboardData);
+      setHealth(healthData);
+    }).catch((error) => {
+      if (active) showToast(error instanceof Error ? error.message : "Dashboard data could not be loaded");
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [showToast]);
+
+  const stats = dashboard?.stats;
+  const totalStudents = stats?.total_students || 0;
+  const attendanceRate = totalStudents ? Math.round(((stats?.today_recognized || 0) / totalStudents) * 100) : 0;
+  const confidence = stats?.avg_confidence || 0;
+  const confidencePercent = Math.round((confidence <= 1 ? confidence * 100 : confidence));
   const cards = [
-    ["Students", "2", "Registered records", "violet"],
-    ["Recognized Today", "2", "Unique attendance", "green"],
-    ["Unknown Today", "6", "Review required", "red"],
-    ["Avg. Confidence", "87%", "Verified matches", "lavender"],
-    ["Attendance Rate", "100%", "Students present today", "purple"],
-    ["All Detections", "12", "Lifetime events", "orange"],
+    ["Students", loading ? "—" : String(totalStudents), "Registered records", "violet"],
+    ["Recognized Today", loading ? "—" : String(stats?.today_recognized || 0), "Unique attendance", "green"],
+    ["Unknown Today", loading ? "—" : String(stats?.today_unknown || 0), "Review required", "red"],
+    ["Avg. Confidence", loading ? "—" : `${confidencePercent}%`, "Verified matches", "lavender"],
+    ["Attendance Rate", loading ? "—" : `${attendanceRate}%`, "Students present today", "purple"],
+    ["All Detections", loading ? "—" : String(stats?.total_detections || 0), "Lifetime events", "orange"],
   ];
+  const trend = dashboard?.trend || [];
+  const trendMax = Math.max(1, ...trend.flatMap((item) => [item.recognized, item.unknown]));
+  const healthCards = [
+    ["API Service", health?.status === "ok" ? "Online" : "Checking"],
+    ["AI Engine", health?.model === "ready" ? "Model ready" : "Available"],
+    ["Database", health?.database === "online" ? "Online" : "Checking"],
+    ["Private Backup", health?.persistence === "private-hub" ? "Connected" : "Local mode"],
+  ];
+
   return (
     <>
-      <PageHeader title="Dashboard" subtitle="Tuesday, 15 July • Live attendance overview" action={<button className="ghost-button" onClick={() => window.location.reload()}>↻ Refresh</button>} />
+      <PageHeader title="Dashboard" subtitle="Live attendance overview • real database data" action={<button className="ghost-button" onClick={() => { setLoading(true); void loadDashboard(); }}>↻ Refresh</button>} />
       <div className="page-body">
         <section className="hero-panel">
-          <div><span className="eyebrow">Smart attendance system</span><h2>Smart attendance, made simple.</h2><p>System ready • all registered students are ready for recognition</p></div>
-          <div className="hero-action"><span className="ready-pill">● AI system is ready</span><button className="primary-button" onClick={() => navigate("monitoring")}>▶ Start Monitoring</button></div>
+          <div><span className="eyebrow">Smart attendance system</span><h2>Smart attendance, made simple.</h2><p>{health?.status === "ok" ? `System ready • ${health.registered_students} registered students` : "Connecting to the AI backend..."}</p></div>
+          <div className="hero-action"><span className="ready-pill">● {health?.status === "ok" ? "AI system is ready" : "Checking system"}</span><button className="primary-button" onClick={() => navigate("monitoring")}>▶ Start Monitoring</button></div>
         </section>
 
         <h3 className="section-title">System Health</h3>
         <section className="health-grid">
-          {["AI Engine", "Database", "Face Dataset", "Camera"].map((label, index) => (
-            <article className="health-card" key={label}><small>{label}</small><strong><span />{index === 2 ? "2/2 ready" : index === 3 ? "Configured" : index === 0 ? "Models ready" : "Online"}</strong></article>
-          ))}
+          {healthCards.map(([label, value]) => <article className="health-card" key={label}><small>{label}</small><strong><span />{value}</strong></article>)}
         </section>
 
         <h3 className="section-title">Today&apos;s Overview</h3>
         <section className="stats-grid">
-          {cards.map(([label, value, note, color]) => (
-            <article className={`stat-card ${color}`} key={label}><div><small>{label}</small><strong>{value}</strong><p>{note}</p></div><span className="stat-symbol">{label[0]}</span></article>
-          ))}
+          {cards.map(([label, value, note, color]) => <article className={`stat-card ${color}`} key={label}><div><small>{label}</small><strong>{value}</strong><p>{note}</p></div><span className="stat-symbol">{label[0]}</span></article>)}
         </section>
 
         <section className="chart-card">
-          <div className="card-heading"><div><h3>7-Day Attendance Trend</h3><p>Recent recognition activity</p></div><div className="legend"><span className="recognized-dot" />Recognized <span className="unknown-dot" />Unknown</div></div>
+          <div className="card-heading"><div><h3>7-Day Attendance Trend</h3><p>Real recognition activity from the database</p></div><div className="legend"><span className="recognized-dot" />Recognized <span className="unknown-dot" />Unknown</div></div>
           <div className="chart-area">
-            {trendData.map((item) => (
-              <div className="bar-column" key={item.day}><div className="bars"><span className="unknown-bar" style={{ height: `${item.unknown}%` }} /><span className="recognized-bar" style={{ height: `${item.recognized}%` }} /></div><small>{item.day}</small></div>
-            ))}
+            {trend.map((item) => {
+              const day = new Date(`${item.date}T00:00:00`).toLocaleDateString([], { weekday: "short" });
+              const recognizedHeight = item.recognized ? Math.max(7, (item.recognized / trendMax) * 100) : 0;
+              const unknownHeight = item.unknown ? Math.max(7, (item.unknown / trendMax) * 100) : 0;
+              return <div className="bar-column" key={item.date}><div className="bars" title={`${item.recognized} recognized, ${item.unknown} unknown`}><span className="unknown-bar" style={{ height: `${unknownHeight}%` }} /><span className="recognized-bar" style={{ height: `${recognizedHeight}%` }} /></div><small>{day}</small></div>;
+            })}
           </div>
         </section>
 
         <section className="dashboard-bottom">
-          <article className="panel"><div className="card-heading"><h3>Recent Activity</h3><button onClick={() => navigate("logs")}>View all</button></div>{recognitionLogs.slice(0, 4).map((log) => <div className="activity-row" key={log.name + log.time}><span className={log.status === "Recognized" ? "good" : "bad"}>●</span><strong>{log.name}</strong><small>{log.time}</small></div>)}</article>
+          <article className="panel"><div className="card-heading"><h3>Recent Activity</h3><button onClick={() => navigate("logs")}>View all</button></div>{dashboard?.recent.length ? dashboard.recent.slice(0, 4).map((log) => <div className="activity-row" key={log.log_id}><span className={log.status === "RECOGNIZED" ? "good" : "bad"}>●</span><strong>{log.status === "UNKNOWN" ? "Unknown Face" : log.student_name}</strong><small>{formatLogTime(log.detection_time)}</small></div>) : <div className="empty-list">{loading ? "Loading activity..." : "No recognition activity yet."}</div>}</article>
           <article className="panel quick-actions"><h3>Quick Actions</h3><button onClick={() => navigate("students")}>+ Register a Student</button><button onClick={() => navigate("logs")}>≡ Review Logs</button><button onClick={() => navigate("reports")}>↗ Generate Reports</button></article>
         </section>
       </div>
