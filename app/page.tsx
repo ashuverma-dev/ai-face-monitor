@@ -29,7 +29,9 @@ type RecognitionResult = {
   confidence: number;
 };
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "https://ai-face-monitor-api-ashu.onrender.com"
+).replace(/\/$/, "");
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, init);
