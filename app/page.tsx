@@ -99,6 +99,9 @@ type AppPreferences = {
 type AuditEntry = { id: string; action: string; details: string; created_at: string };
 type AdminAccount = { username: string; created_at: string; recovery_ready: boolean; recovery_code?: string };
 type AttendanceRecord = { student_id: number; student_name: string; roll_number: string; department: string; attendance_date: string; status: "PRESENT" | "ABSENT"; source: "AI" | "MANUAL" | "NOT_RECORDED"; first_seen: string | null; updated_by: string | null };
+type LivenessChallenge = { challenge_id: string; sequence: ("LEFT" | "RIGHT" | "CENTER")[]; step: number; expires_in: number };
+type LivenessCheck = { face: boolean; pose: "LEFT" | "RIGHT" | "CENTER" | "NONE"; step: number; complete: boolean; expected?: "LEFT" | "RIGHT" | "CENTER"; liveness_token?: string };
+type AttendancePercentages = { month: string; total_days: number; students: { student_id: number; name: string; roll: string; department: string; present_days: number; total_days: number; percentage: number }[] };
 
 const TOKEN_KEY = "face-monitor-session-token";
 const ROLE_KEY = "face-monitor-session-role";
@@ -758,32 +761,62 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
   const [summary, setSummary] = useState({ recognized: 0, unknown: 0, captures: 0 });
   const [recent, setRecent] = useState<string[]>([]);
   const [connectionState, setConnectionState] = useState<"idle" | "connected" | "retrying">("idle");
+  const [livenessText, setLivenessText] = useState("Start camera for live face check");
+  const [livenessProgress, setLivenessProgress] = useState(0);
   const requestActive = useRef(false);
   const failureCount = useRef(0);
   const retryAfter = useRef(0);
+  const challengeRef = useRef<LivenessChallenge | null>(null);
 
   useEffect(() => {
     if (!running) {
       failureCount.current = 0;
       retryAfter.current = 0;
+      challengeRef.current = null;
       return;
     }
     let active = true;
+    const poseInstruction = (pose: "LEFT" | "RIGHT" | "CENTER") => {
+      if (pose === "CENTER") return "Look straight at the camera";
+      const visiblePose = preferences.mirrorPreview ? (pose === "LEFT" ? "RIGHT" : "LEFT") : pose;
+      return `Turn your head ${visiblePose.toLowerCase()}`;
+    };
     const recognize = async () => {
       const video = videoRef.current;
       if (!video || video.readyState < 2 || requestActive.current || Date.now() < retryAfter.current) return;
       requestActive.current = true;
       try {
+        if (!challengeRef.current) {
+          const challenge = await apiRequest<LivenessChallenge>("/liveness/start", { method: "POST" });
+          challengeRef.current = challenge;
+          setLivenessProgress(0);
+          setLivenessText(poseInstruction(challenge.sequence[0]));
+          return;
+        }
         const blob = await frameBlob(video);
+        const liveForm = new FormData();
+        liveForm.append("challenge_id", challengeRef.current.challenge_id);
+        liveForm.append("image", blob, "liveness.jpg");
+        const live = await apiRequest<LivenessCheck>("/liveness/check", { method: "POST", body: liveForm });
+        if (!active) return;
+        setLivenessProgress(live.step);
+        if (!live.complete || !live.liveness_token) {
+          setLivenessText(!live.face ? "Keep one clear face in frame" : poseInstruction(live.expected || challengeRef.current.sequence[live.step] || "CENTER"));
+          setConnectionState("connected");
+          return;
+        }
+        setLivenessText("Live person verified");
         const form = new FormData();
         form.append("image", blob, "camera.jpg");
         form.append("threshold", String(preferences.threshold / 100));
+        form.append("liveness_token", live.liveness_token);
         const next = await apiRequest<RecognitionResult>("/recognize", { method: "POST", body: form });
         if (!active) return;
         failureCount.current = 0;
         retryAfter.current = 0;
         setConnectionState("connected");
         setResult(next);
+        challengeRef.current = null;
         if (next.status === "RECOGNIZED") {
           setSummary((value) => ({ ...value, recognized: value.recognized + 1, captures: value.captures + 1 }));
           setRecent((items) => [`${next.name} • ${Math.round(next.confidence * 100)}%`, ...items].slice(0, 5));
@@ -795,6 +828,9 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
         failureCount.current += 1;
         if (failureCount.current >= 3) retryAfter.current = Date.now() + 5000;
         setConnectionState("retrying");
+        challengeRef.current = null;
+        setLivenessProgress(0);
+        setLivenessText("Restarting live face check");
         setResult({ status: "NO_FACE", name: error instanceof Error ? error.message : "AI server unavailable", confidence: 0 });
       } finally {
         requestActive.current = false;
@@ -806,12 +842,15 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
       active = false;
       window.clearInterval(timer);
     };
-  }, [running, videoRef, preferences.threshold]);
+  }, [running, videoRef, preferences.threshold, preferences.mirrorPreview]);
 
   const startMonitoring = () => {
     failureCount.current = 0;
     retryAfter.current = 0;
     setConnectionState("idle");
+    challengeRef.current = null;
+    setLivenessProgress(0);
+    setLivenessText("Preparing live face check");
     startCamera();
   };
 
@@ -819,6 +858,9 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
     failureCount.current = 0;
     retryAfter.current = 0;
     setConnectionState("idle");
+    challengeRef.current = null;
+    setLivenessProgress(0);
+    setLivenessText("Start camera for live face check");
     stopCamera();
   };
 
@@ -835,6 +877,7 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
         </section>
         <aside className="detection-panel">
           <div className={`monitor-connection ${connectionState}`}><span />{connectionState === "retrying" ? "AI reconnecting" : connectionState === "connected" ? "AI connected" : "AI waiting"}</div>
+          <div className="liveness-status"><span>Live check {Math.min(livenessProgress, 4)} / 4</span><strong>{livenessText}</strong><div><i style={{ width: `${Math.min(livenessProgress / 4, 1) * 100}%` }} /></div></div>
           <p className="threshold-note">Active match threshold: {preferences.threshold}%</p>
           <span className="eyebrow">Current Detection</span><h2 className={result?.status === "RECOGNIZED" ? "detection-good" : result?.status === "UNKNOWN" ? "detection-bad" : ""}>{displayName}</h2><p>Confidence: {result?.status === "RECOGNIZED" ? `${Math.round(result.confidence * 100)}%` : "—"}</p><p>Status: {statusText}</p>
           <hr /><h3>Session Summary</h3><div className="metric-line good"><span>Recognized</span><strong>{summary.recognized}</strong></div><div className="metric-line bad"><span>Unknown</span><strong>{summary.unknown}</strong></div><div className="metric-line"><span>Captures</span><strong>{summary.captures}</strong></div>
@@ -847,6 +890,7 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
 
 function Students({ students, setStudents, openForm, openCapture, openPortal, showToast }: { students: Student[]; setStudents: Dispatch<SetStateAction<Student[]>>; openForm: () => void; openCapture: (student: Student) => void; openPortal: (student: Student) => void; showToast: (message: string) => void }) {
   const [search, setSearch] = useState("");
+  const csvInputRef = useRef<HTMLInputElement>(null);
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleStudents = normalizedSearch
     ? students.filter((student) => [student.name, student.roll, student.course].some((value) => value.toLocaleLowerCase().includes(normalizedSearch)))
@@ -861,9 +905,23 @@ function Students({ students, setStudents, openForm, openCapture, openPortal, sh
       showToast(error instanceof Error ? error.message : "Student could not be deleted");
     }
   };
+  const importCsv = async (file?: File) => {
+    if (!file) return;
+    const form = new FormData(); form.append("file", file, file.name);
+    try {
+      const result = await apiRequest<{ created: number; skipped: number }>("/students/import-csv", { method: "POST", body: form });
+      setStudents(await apiRequest<Student[]>("/students"));
+      showToast(`${result.created} students imported${result.skipped ? `, ${result.skipped} skipped` : ""}`);
+    } catch (error) { showToast(error instanceof Error ? error.message : "CSV could not be imported"); }
+    finally { if (csvInputRef.current) csvInputRef.current.value = ""; }
+  };
+  const downloadCsvTemplate = () => {
+    const blob = new Blob(["name,roll,department,semester\nAsha Verma,20001,Computer Science,3\n"], { type: "text/csv" });
+    const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "student-import-template.csv"; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   return (
     <>
-      <PageHeader title="Student Management" subtitle="Register students and manage face profiles" action={<button className="primary-button small" onClick={openForm}>+ Add Student</button>} />
+      <PageHeader title="Student Management" subtitle="Register students and manage face profiles" action={<div className="student-import-actions"><input ref={csvInputRef} type="file" accept=".csv,text/csv" hidden onChange={(event) => void importCsv(event.target.files?.[0])} /><button className="ghost-button" onClick={downloadCsvTemplate}>CSV Template</button><button className="ghost-button" onClick={() => csvInputRef.current?.click()}>Import CSV</button><button className="primary-button small" onClick={openForm}>+ Add Student</button></div>} />
       <div className="page-body"><section className="panel students-panel"><div className="card-heading"><div><h3>Registered Students</h3><p>{normalizedSearch ? `${visibleStudents.length} of ${students.length} profiles` : `${students.length} student profiles`}</p></div><div className="student-search"><input className="search-input" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search students by name, roll number or department" placeholder="Search name, roll or department..." />{search && <button type="button" onClick={() => setSearch("")} aria-label="Clear student search">Clear</button>}</div></div><div className="student-list">{visibleStudents.map((student) => <article className="student-row" key={student.id}><div className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</div><div className="student-info"><strong>{student.name}</strong><p>{student.roll} • {student.course}</p></div><span className={student.ready ? "ready-badge" : "ready-badge pending"}>● {student.ready ? "Ready" : "Face needed"} • {student.images} images</span><div className="row-actions"><button onClick={() => openPortal(student)}>{student.portal_enabled ? "Reset Login" : "Create Login"}</button><button onClick={() => openCapture(student)}>Capture</button><button className="danger-link" onClick={() => removeStudent(student)}>Delete</button></div></article>)}{!visibleStudents.length && <div className="student-no-results"><strong>No matching students</strong><p>Try a different name, roll number or department.</p><button type="button" className="ghost-button" onClick={() => setSearch("")}>Clear Search</button></div>}</div></section></div>
     </>
   );
@@ -1034,6 +1092,8 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
   const [attendanceDate, setAttendanceDate] = useState(today);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [attendanceLoading, setAttendanceLoading] = useState(true);
+  const [percentageMonth, setPercentageMonth] = useState(today.slice(0, 7));
+  const [percentages, setPercentages] = useState<AttendancePercentages | null>(null);
 
   const loadAttendance = useCallback(async (dateValue: string) => {
     setAttendanceLoading(true);
@@ -1046,6 +1106,13 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
     const timer = window.setTimeout(() => void loadAttendance(attendanceDate), 0);
     return () => window.clearTimeout(timer);
   }, [attendanceDate, loadAttendance]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      apiRequest<AttendancePercentages>(`/attendance/percentages?month=${percentageMonth}`).then(setPercentages).catch(() => setPercentages(null));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [percentageMonth]);
 
   const saveAttendance = async (record: AttendanceRecord, status: "PRESENT" | "ABSENT") => {
     try {
@@ -1097,6 +1164,7 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
   return <><PageHeader title="Reports" subtitle="Generate real attendance reports from the live database" /><div className="page-body">
     <section className="panel manual-attendance"><div className="card-heading"><div><span className="eyebrow">Official daily record</span><h2>Manual Attendance</h2><p>AI records one entry per student each day. Correct any missing student here.</p></div><label>Date<input type="date" value={attendanceDate} max={today} onChange={(event) => setAttendanceDate(event.target.value)} /></label></div><div className="attendance-totals"><span>Present <strong>{attendance.filter((item) => item.status === "PRESENT").length}</strong></span><span>Absent <strong>{attendance.filter((item) => item.status === "ABSENT").length}</strong></span></div><div className="manual-attendance-list">{attendance.map((record) => <div className="manual-attendance-row" key={record.student_id}><div><strong>{record.student_name}</strong><small>{record.roll_number} · {record.department || "No department"}</small></div><span className={`attendance-pill ${record.status.toLowerCase()}`}>{record.status}{record.source === "MANUAL" ? " · MANUAL" : ""}</span><div><button className={record.status === "PRESENT" ? "active-present" : ""} onClick={() => void saveAttendance(record, "PRESENT")}>Present</button><button className={record.status === "ABSENT" && record.source === "MANUAL" ? "active-absent" : ""} onClick={() => void saveAttendance(record, "ABSENT")}>Absent</button></div></div>)}{attendanceLoading && <div className="empty-list">Loading daily attendance...</div>}{!attendanceLoading && !attendance.length && <div className="empty-list">Register students to manage daily attendance.</div>}</div></section>
     <section className="panel custom-report"><div><span className="eyebrow">Custom report</span><h2>Filter Attendance</h2><p>Choose dates and optionally narrow the file to one student.</p></div><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>To<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><select value={studentFilter} onChange={(event) => setStudentFilter(event.target.value)} aria-label="Filter report by student"><option value="">All students</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select><div><button className="primary-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("xlsx")}>Filtered Excel</button><button className="ghost-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("pdf")}>Filtered PDF</button></div></section>
+    <section className="panel percentage-panel"><div className="card-heading"><div><span className="eyebrow">Monthly performance</span><h2>Attendance Percentage</h2><p>{percentages?.total_days || 0} attendance days recorded in this month.</p></div><input type="month" value={percentageMonth} max={today.slice(0, 7)} onChange={(event) => setPercentageMonth(event.target.value)} aria-label="Attendance percentage month" /></div><div className="percentage-list">{percentages?.students.map((student) => <div key={student.student_id}><span><strong>{student.name}</strong><small>{student.roll} · {student.present_days}/{student.total_days} days</small></span><b className={student.percentage >= 75 ? "good" : student.percentage >= 50 ? "warning" : "bad"}>{student.percentage}%</b></div>)}{percentages && !percentages.students.length && <div className="empty-list">No students registered.</div>}</div></section>
     <div className="report-grid">{reportCard("daily", "Today", "Daily Report", "Download today's recognized students, unknown events and attendance summary.")}{reportCard("monthly", "This Month", "Monthly Report", "Download the current month's complete attendance activity and summary.")}</div>
     <section className="panel generated-files"><div className="card-heading"><div><h3>Generated Files</h3><p>Reports are saved in your browser&apos;s Downloads folder.</p></div><span className="report-live-badge">● Live database</span></div>
       {generated.length ? <div className="generated-file-list">{generated.map((file, index) => <div className="file-row" key={`${file.period}-${file.fileType}-${index}`}><span>{file.fileType === "pdf" ? "PDF" : "XL"}</span><div><strong>{file.filename}</strong><p>Generated at {file.generatedAt} • Saved to Downloads</p></div><button disabled={Boolean(downloading)} onClick={() => file.period === "custom" ? void downloadCustom(file.fileType) : void download(file.period, file.fileType)}>Download Again</button></div>)}</div> : <div className="report-empty"><span>↗</span><div><strong>No report generated in this session</strong><p>Choose Excel or PDF above. The file will appear here and in Downloads.</p></div></div>}
@@ -1113,10 +1181,12 @@ function Settings({ preferences, onSave, showToast, adminUsername }: { preferenc
   const [newAdminUsername, setNewAdminUsername] = useState("");
   const [newAdminPassword, setNewAdminPassword] = useState("");
   const [revealedCode, setRevealedCode] = useState("");
+  const [retentionDays, setRetentionDays] = useState(30);
   const thresholdLabel = draft.threshold >= 70 ? "Strict" : draft.threshold <= 42 ? "Flexible" : "Balanced";
   const loadAdmins = useCallback(async () => { try { setAdmins(await apiRequest<AdminAccount[]>("/auth/admins")); } catch { setAdmins([]); } }, []);
   useEffect(() => {
     apiRequest<AuditEntry[]>("/audit").then(setAudit).catch(() => setAudit([]));
+    apiRequest<{ days: number }>("/settings/retention").then((value) => setRetentionDays(value.days)).catch(() => undefined);
     const timer = window.setTimeout(() => void loadAdmins(), 0);
     return () => window.clearTimeout(timer);
   }, [loadAdmins]);
@@ -1144,6 +1214,10 @@ function Settings({ preferences, onSave, showToast, adminUsername }: { preferenc
     try { const result = await apiRequest<{ recovery_code: string }>("/auth/recovery-code", { method: "POST" }); setRevealedCode(`${adminUsername}: ${result.recovery_code}`); await loadAdmins(); showToast("New recovery code generated"); }
     catch (error) { showToast(error instanceof Error ? error.message : "Recovery code could not be generated"); }
   };
+  const saveRetention = async () => {
+    try { const result = await apiRequest<{ days: number; deleted: number }>("/settings/retention", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: retentionDays }) }); setRetentionDays(result.days); showToast(`Retention saved${result.deleted ? `; ${result.deleted} old images removed` : ""}`); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Retention could not be saved"); }
+  };
   const downloadBackup = async () => {
     try {
       const { blob, filename } = await apiDownload("/backup"); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); showToast("Database backup saved in Downloads");
@@ -1169,6 +1243,7 @@ function Settings({ preferences, onSave, showToast, adminUsername }: { preferenc
       </section>
       <section className="panel setting-card system-info"><span className="eyebrow">Active Configuration</span><h2>Monitoring Setup</h2><p>The values below are sent to the live recognition screen.</p><ul><li>{draft.threshold}% face match threshold</li><li>{draft.mirrorPreview ? "Mirrored" : "Natural"} camera preview</li><li>Scan effect {draft.scanEffect ? "enabled" : "disabled"}</li></ul></section>
       <section className="panel setting-card"><span className="eyebrow">Data safety</span><h2>Database Backup</h2><p>Download a transaction-safe copy of students, attendance records and settings.</p><button className="primary-button" onClick={() => void downloadBackup()}>Download Backup</button></section>
+      <section className="panel setting-card retention-card"><span className="eyebrow">Automatic cleanup</span><h2>Captured Image Retention</h2><p>Old evidence photos are removed automatically while attendance logs stay safe.</p><label>Keep photos for<input type="number" min="1" max="365" value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} /> days</label><button className="primary-button" onClick={() => void saveRetention()}>Save & Clean Now</button></section>
       <section className="panel setting-card security-card"><span className="eyebrow">Signed in as {adminUsername}</span><h2>Change Password</h2><p>Changing your password immediately replaces your current secure session.</p><form className="compact-form" onSubmit={changePassword}><input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="Current password" minLength={12} required /><input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="New strong password" minLength={12} required /><button className="primary-button" type="submit">Change Password</button></form></section>
       <section className="panel setting-card security-card"><span className="eyebrow">Account recovery</span><h2>Recovery Code</h2><p>Generate and safely store this code. Each code can reset the password once.</p><button className="ghost-button" onClick={() => void rotateRecoveryCode()}>Generate New Code</button>{revealedCode && <div className="recovery-code" role="status"><strong>Save this now</strong><code>{revealedCode}</code><small>It will not be shown again after leaving this page.</small></div>}</section>
       <section className="panel setting-card admin-accounts-card"><span className="eyebrow">Team access</span><h2>Teacher / Admin Accounts</h2><p>Create separate secure logins instead of sharing one password.</p><form className="compact-form admin-create-form" onSubmit={createAdmin}><input value={newAdminUsername} onChange={(event) => setNewAdminUsername(event.target.value)} placeholder="Username" required /><input type="password" value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} placeholder="Strong password" minLength={12} required /><button className="primary-button" type="submit">Add Account</button></form><div className="admin-account-list">{admins.map((account) => <div key={account.username}><span><strong>{account.username}</strong><small>{account.recovery_ready ? "Recovery ready" : "Recovery code needed"}</small></span>{account.username !== adminUsername && <button onClick={() => void removeAdmin(account.username)}>Delete</button>}</div>)}</div></section>

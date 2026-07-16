@@ -206,10 +206,16 @@ button { cursor: pointer; }
 .monitor-connection.retrying { color: var(--orange); background: rgba(228,185,109,.08); }
 .monitor-connection.retrying span { background: var(--orange); }
 .threshold-note { margin: 0 0 12px; color: var(--lavender) !important; font-weight: 800; }
+.liveness-status { margin: 10px 0 14px; padding: 11px; display: grid; gap: 6px; border: 1px solid rgba(143,214,176,.22); border-radius: 10px; background: rgba(143,214,176,.05); }
+.liveness-status span { color: var(--green); font-size: 9px; font-weight: 900; text-transform: uppercase; }
+.liveness-status strong { font-size: 11px; }
+.liveness-status > div { height: 5px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.08); }
+.liveness-status i { height: 100%; display: block; background: linear-gradient(90deg, var(--green), var(--lavender)); transition: width .25s ease; }
 
 .students-panel { padding: 0; overflow: hidden; }
 .students-panel > .card-heading { padding: 18px; border-bottom: 1px solid rgba(166,99,204,.16); }
 .student-search { min-width: min(360px, 46%); display: flex; align-items: center; gap: 7px; }
+.student-import-actions { display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; }
 .student-search .search-input { width: 100%; }
 .student-search button { min-height: 36px; padding: 0 10px; border: 1px solid rgba(166,99,204,.25); border-radius: 9px; color: var(--lavender); background: rgba(166,99,204,.08); font-size: 11px; font-weight: 800; }
 .search-input, select, .modal input, .modal select { height: 38px; border-radius: 10px; border: 1px solid rgba(166,99,204,.27); background: rgba(23,17,35,.7); color: var(--text); padding: 0 13px; outline: none; }
@@ -314,6 +320,14 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
 .admin-account-list > div { padding: 8px 9px; display: flex; align-items: center; justify-content: space-between; border-radius: 9px; background: rgba(255,255,255,.04); }
 .admin-account-list span { display: grid; gap: 2px; }
 .admin-account-list button { border: 0; color: var(--red); background: transparent; }
+.percentage-panel { margin: 14px 0; }
+.percentage-panel input, .retention-card input { min-height: 40px; border: 1px solid rgba(166,99,204,.27); border-radius: 10px; padding: 0 10px; color: var(--text); background: rgba(23,17,35,.7); }
+.percentage-list { display: grid; gap: 7px; margin-top: 12px; }
+.percentage-list > div { padding: 9px 11px; display: flex; align-items: center; justify-content: space-between; border-radius: 10px; background: rgba(255,255,255,.035); }
+.percentage-list span { display: grid; gap: 3px; }
+.percentage-list small { color: var(--muted); }
+.percentage-list b { font-size: 15px; }
+.retention-card label { display: grid; grid-template-columns: 1fr 80px auto; align-items: center; gap: 7px; margin: 10px 0; color: var(--muted); font-size: 10px; }
 .audit-list { display: grid; gap: 7px; }
 .audit-list > div { padding: 9px; display: grid; gap: 3px; border-radius: 9px; background: rgba(255,255,255,.04); }
 .audit-list span, .audit-list small { color: var(--muted); font-size: 10px; }
@@ -371,6 +385,8 @@ td { font-size: 11px; }
   .manual-attendance-row { grid-template-columns: 1fr; }
   .manual-attendance-row > div:last-child { width: 100%; }
   .manual-attendance-row button { flex: 1; }
+  .student-import-actions { width: 100%; justify-content: flex-start; }
+  .retention-card label { grid-template-columns: 1fr 80px auto; }
   .student-portal-shell { padding: 10px 12px 30px; }
   .student-portal-header { margin-bottom: 10px; }
   .student-welcome { padding: 20px; flex-wrap: wrap; }
