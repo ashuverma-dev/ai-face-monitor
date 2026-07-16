@@ -99,9 +99,10 @@ type AppPreferences = {
 type AuditEntry = { id: string; action: string; details: string; created_at: string };
 type AdminAccount = { username: string; created_at: string; recovery_ready: boolean; recovery_code?: string };
 type AttendanceRecord = { student_id: number; student_name: string; roll_number: string; department: string; attendance_date: string; status: "PRESENT" | "ABSENT"; source: "AI" | "MANUAL" | "NOT_RECORDED"; first_seen: string | null; updated_by: string | null };
-type LivenessChallenge = { challenge_id: string; sequence: ("LEFT" | "RIGHT" | "CENTER")[]; step: number; expires_in: number };
-type LivenessCheck = { face: boolean; pose: "LEFT" | "RIGHT" | "CENTER" | "NONE"; step: number; complete: boolean; expected?: "LEFT" | "RIGHT" | "CENTER"; liveness_token?: string };
+type LivenessChallenge = { challenge_id: string; sequence: ("LEFT" | "RIGHT" | "CENTER")[]; step: number; expires_in: number; checks?: string[] };
+type LivenessCheck = { face: boolean; pose: "LEFT" | "RIGHT" | "CENTER" | "NONE"; step: number; complete: boolean; expected?: "LEFT" | "RIGHT" | "CENTER"; liveness_token?: string; reason?: string; anti_spoof?: string; quality?: { brightness: number; sharpness: number; face_ratio?: number } };
 type AttendancePercentages = { month: string; total_days: number; students: { student_id: number; name: string; roll: string; department: string; present_days: number; total_days: number; percentage: number }[] };
+type AlertSettings = { enabled: boolean; low_percentage: number; email_recipient: string; whatsapp_recipient: string; send_absent: boolean; email_available: boolean; whatsapp_available: boolean };
 
 const TOKEN_KEY = "face-monitor-session-token";
 const ROLE_KEY = "face-monitor-session-role";
@@ -763,6 +764,9 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
   const [connectionState, setConnectionState] = useState<"idle" | "connected" | "retrying">("idle");
   const [livenessText, setLivenessText] = useState("Start camera for live face check");
   const [livenessProgress, setLivenessProgress] = useState(0);
+  const [livenessTotal, setLivenessTotal] = useState(5);
+  const [environmentText, setEnvironmentText] = useState("Camera quality will appear here");
+  const [networkLatency, setNetworkLatency] = useState<number | null>(null);
   const requestActive = useRef(false);
   const failureCount = useRef(0);
   const retryAfter = useRef(0);
@@ -790,6 +794,7 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
           const challenge = await apiRequest<LivenessChallenge>("/liveness/start", { method: "POST" });
           challengeRef.current = challenge;
           setLivenessProgress(0);
+          setLivenessTotal(challenge.sequence.length);
           setLivenessText(poseInstruction(challenge.sequence[0]));
           return;
         }
@@ -797,11 +802,18 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
         const liveForm = new FormData();
         liveForm.append("challenge_id", challengeRef.current.challenge_id);
         liveForm.append("image", blob, "liveness.jpg");
+        const requestStarted = performance.now();
         const live = await apiRequest<LivenessCheck>("/liveness/check", { method: "POST", body: liveForm });
+        setNetworkLatency(Math.round(performance.now() - requestStarted));
         if (!active) return;
         setLivenessProgress(live.step);
+        if (live.quality) {
+          const lighting = live.quality.brightness < 45 ? "Low light" : live.quality.brightness > 215 ? "Too bright" : "Lighting good";
+          const focus = live.quality.sharpness < 20 ? "hold camera steady" : "camera clear";
+          setEnvironmentText(`${lighting} · ${focus}`);
+        }
         if (!live.complete || !live.liveness_token) {
-          setLivenessText(!live.face ? "Keep one clear face in frame" : poseInstruction(live.expected || challengeRef.current.sequence[live.step] || "CENTER"));
+          setLivenessText(live.reason || (!live.face ? "Keep one clear face in frame" : poseInstruction(live.expected || challengeRef.current.sequence[live.step] || "CENTER")));
           setConnectionState("connected");
           return;
         }
@@ -850,6 +862,8 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
     setConnectionState("idle");
     challengeRef.current = null;
     setLivenessProgress(0);
+    setEnvironmentText("Checking lighting, focus and movement");
+    setNetworkLatency(null);
     setLivenessText("Preparing live face check");
     startCamera();
   };
@@ -860,6 +874,8 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
     setConnectionState("idle");
     challengeRef.current = null;
     setLivenessProgress(0);
+    setEnvironmentText("Camera quality will appear here");
+    setNetworkLatency(null);
     setLivenessText("Start camera for live face check");
     stopCamera();
   };
@@ -877,7 +893,7 @@ function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }:
         </section>
         <aside className="detection-panel">
           <div className={`monitor-connection ${connectionState}`}><span />{connectionState === "retrying" ? "AI reconnecting" : connectionState === "connected" ? "AI connected" : "AI waiting"}</div>
-          <div className="liveness-status"><span>Live check {Math.min(livenessProgress, 4)} / 4</span><strong>{livenessText}</strong><div><i style={{ width: `${Math.min(livenessProgress / 4, 1) * 100}%` }} /></div></div>
+          <div className="liveness-status"><span>Advanced live check {Math.min(livenessProgress, livenessTotal)} / {livenessTotal}</span><strong>{livenessText}</strong><div><i style={{ width: `${Math.min(livenessProgress / livenessTotal, 1) * 100}%` }} /></div><small>{environmentText}{networkLatency !== null ? ` · ${networkLatency}ms server` : ""}</small></div>
           <p className="threshold-note">Active match threshold: {preferences.threshold}%</p>
           <span className="eyebrow">Current Detection</span><h2 className={result?.status === "RECOGNIZED" ? "detection-good" : result?.status === "UNKNOWN" ? "detection-bad" : ""}>{displayName}</h2><p>Confidence: {result?.status === "RECOGNIZED" ? `${Math.round(result.confidence * 100)}%` : "—"}</p><p>Status: {statusText}</p>
           <hr /><h3>Session Summary</h3><div className="metric-line good"><span>Recognized</span><strong>{summary.recognized}</strong></div><div className="metric-line bad"><span>Unknown</span><strong>{summary.unknown}</strong></div><div className="metric-line"><span>Captures</span><strong>{summary.captures}</strong></div>
@@ -1182,11 +1198,15 @@ function Settings({ preferences, onSave, showToast, adminUsername }: { preferenc
   const [newAdminPassword, setNewAdminPassword] = useState("");
   const [revealedCode, setRevealedCode] = useState("");
   const [retentionDays, setRetentionDays] = useState(30);
+  const [restorePassword, setRestorePassword] = useState("");
+  const backupInputRef = useRef<HTMLInputElement>(null);
+  const [alerts, setAlerts] = useState<AlertSettings>({ enabled: false, low_percentage: 75, email_recipient: "", whatsapp_recipient: "", send_absent: true, email_available: false, whatsapp_available: false });
   const thresholdLabel = draft.threshold >= 70 ? "Strict" : draft.threshold <= 42 ? "Flexible" : "Balanced";
   const loadAdmins = useCallback(async () => { try { setAdmins(await apiRequest<AdminAccount[]>("/auth/admins")); } catch { setAdmins([]); } }, []);
   useEffect(() => {
     apiRequest<AuditEntry[]>("/audit").then(setAudit).catch(() => setAudit([]));
     apiRequest<{ days: number }>("/settings/retention").then((value) => setRetentionDays(value.days)).catch(() => undefined);
+    apiRequest<AlertSettings>("/settings/alerts").then(setAlerts).catch(() => undefined);
     const timer = window.setTimeout(() => void loadAdmins(), 0);
     return () => window.clearTimeout(timer);
   }, [loadAdmins]);
@@ -1224,6 +1244,29 @@ function Settings({ preferences, onSave, showToast, adminUsername }: { preferenc
       setAudit(await apiRequest<AuditEntry[]>("/audit"));
     } catch (error) { showToast(error instanceof Error ? error.message : "Backup could not be created"); }
   };
+  const restoreBackup = async (file: File) => {
+    if (!restorePassword) return showToast("Enter current admin password first");
+    if (!window.confirm("Restore this backup? Current data will be replaced after a safety copy is created.")) return;
+    const form = new FormData(); form.append("file", file); form.append("current_password", restorePassword);
+    try {
+      await apiRequest<{ restored: boolean }>("/backup/restore", { method: "POST", body: form });
+      window.alert("Backup restored successfully. Please sign in again.");
+      window.localStorage.removeItem(TOKEN_KEY); window.localStorage.removeItem(ROLE_KEY); window.localStorage.removeItem("face-monitor-admin-token"); window.location.reload();
+    } catch (error) { showToast(error instanceof Error ? error.message : "Backup could not be restored"); }
+    finally { if (backupInputRef.current) backupInputRef.current.value = ""; }
+  };
+  const saveAlerts = async () => {
+    try {
+      const updated = await apiRequest<AlertSettings>("/settings/alerts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(alerts) });
+      setAlerts(updated); showToast("Attendance alert settings saved");
+    } catch (error) { showToast(error instanceof Error ? error.message : "Alert settings could not be saved"); }
+  };
+  const testAlerts = async () => {
+    try {
+      const result = await apiRequest<{ sent: string[]; errors?: string[] }>("/alerts/test", { method: "POST" });
+      showToast(result.sent.length ? `Test sent by ${result.sent.join(" & ")}` : result.errors?.[0] || "No alert channel is configured");
+    } catch (error) { showToast(error instanceof Error ? error.message : "Test alert could not be sent"); }
+  };
   return <>
     <PageHeader title="System Settings" subtitle="Configure recognition and camera preferences" />
     <div className="page-body settings-grid">
@@ -1242,8 +1285,10 @@ function Settings({ preferences, onSave, showToast, adminUsername }: { preferenc
         <div className="settings-actions"><button className="primary-button" onClick={() => onSave(draft)}>Save Settings</button><button className="ghost-button" onClick={() => setDraft(DEFAULT_PREFERENCES)}>Reset Defaults</button></div>
       </section>
       <section className="panel setting-card system-info"><span className="eyebrow">Active Configuration</span><h2>Monitoring Setup</h2><p>The values below are sent to the live recognition screen.</p><ul><li>{draft.threshold}% face match threshold</li><li>{draft.mirrorPreview ? "Mirrored" : "Natural"} camera preview</li><li>Scan effect {draft.scanEffect ? "enabled" : "disabled"}</li></ul></section>
-      <section className="panel setting-card"><span className="eyebrow">Data safety</span><h2>Database Backup</h2><p>Download a transaction-safe copy of students, attendance records and settings.</p><button className="primary-button" onClick={() => void downloadBackup()}>Download Backup</button></section>
+      <section className="panel setting-card backup-restore-card"><span className="eyebrow">Data safety</span><h2>Backup & Restore</h2><p>Download students, attendance, settings and face templates. Restore validates the file and creates a safety copy first.</p><div className="settings-actions"><button className="primary-button" onClick={() => void downloadBackup()}>Download Backup</button><button className="ghost-button" onClick={() => backupInputRef.current?.click()}>Restore Backup</button></div><input type="password" value={restorePassword} onChange={(event) => setRestorePassword(event.target.value)} placeholder="Current password before restore" minLength={12} /><input ref={backupInputRef} type="file" accept=".zip,.db,application/zip,application/vnd.sqlite3" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void restoreBackup(file); }} /></section>
       <section className="panel setting-card retention-card"><span className="eyebrow">Automatic cleanup</span><h2>Captured Image Retention</h2><p>Old evidence photos are removed automatically while attendance logs stay safe.</p><label>Keep photos for<input type="number" min="1" max="365" value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} /> days</label><button className="primary-button" onClick={() => void saveRetention()}>Save & Clean Now</button></section>
+      <section className="panel setting-card alerts-card"><span className="eyebrow">Daily notifications</span><h2>Email / WhatsApp Alerts</h2><p>Daily scheduled summary can report absent students and attendance below your limit.</p><label className="switch-row"><span>Enable daily alerts</span><input type="checkbox" checked={alerts.enabled} onChange={(event) => setAlerts((value) => ({ ...value, enabled: event.target.checked }))} /></label><label>Low attendance below<input type="number" min="1" max="100" value={alerts.low_percentage} onChange={(event) => setAlerts((value) => ({ ...value, low_percentage: Number(event.target.value) }))} />%</label><input type="email" value={alerts.email_recipient} onChange={(event) => setAlerts((value) => ({ ...value, email_recipient: event.target.value }))} placeholder="Admin email for alerts" /><input value={alerts.whatsapp_recipient} onChange={(event) => setAlerts((value) => ({ ...value, whatsapp_recipient: event.target.value }))} placeholder="WhatsApp with country code" /><label className="switch-row"><span>Include absent student list</span><input type="checkbox" checked={alerts.send_absent} onChange={(event) => setAlerts((value) => ({ ...value, send_absent: event.target.checked }))} /></label><small>Email service: {alerts.email_available ? "connected" : "credentials needed"} · WhatsApp: {alerts.whatsapp_available ? "connected" : "credentials needed"}</small><div className="settings-actions"><button className="primary-button" onClick={() => void saveAlerts()}>Save Alerts</button><button className="ghost-button" onClick={() => void testAlerts()}>Send Test</button></div></section>
+      <section className="panel setting-card readiness-card"><span className="eyebrow">Field testing</span><h2>Real-world Readiness</h2><p>Live Monitoring now measures light, camera focus and server delay during every anti-spoof check.</p><ul><li>Test one bright and one low-light room</li><li>Test laptop and mobile cameras</li><li>Test once on slow mobile internet</li><li>Confirm a printed photo and replay video are rejected</li></ul><small>Open Live Monitoring to see the live environment and network result.</small></section>
       <section className="panel setting-card security-card"><span className="eyebrow">Signed in as {adminUsername}</span><h2>Change Password</h2><p>Changing your password immediately replaces your current secure session.</p><form className="compact-form" onSubmit={changePassword}><input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="Current password" minLength={12} required /><input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="New strong password" minLength={12} required /><button className="primary-button" type="submit">Change Password</button></form></section>
       <section className="panel setting-card security-card"><span className="eyebrow">Account recovery</span><h2>Recovery Code</h2><p>Generate and safely store this code. Each code can reset the password once.</p><button className="ghost-button" onClick={() => void rotateRecoveryCode()}>Generate New Code</button>{revealedCode && <div className="recovery-code" role="status"><strong>Save this now</strong><code>{revealedCode}</code><small>It will not be shown again after leaving this page.</small></div>}</section>
       <section className="panel setting-card admin-accounts-card"><span className="eyebrow">Team access</span><h2>Teacher / Admin Accounts</h2><p>Create separate secure logins instead of sharing one password.</p><form className="compact-form admin-create-form" onSubmit={createAdmin}><input value={newAdminUsername} onChange={(event) => setNewAdminUsername(event.target.value)} placeholder="Username" required /><input type="password" value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} placeholder="Strong password" minLength={12} required /><button className="primary-button" type="submit">Add Account</button></form><div className="admin-account-list">{admins.map((account) => <div key={account.username}><span><strong>{account.username}</strong><small>{account.recovery_ready ? "Recovery ready" : "Recovery code needed"}</small></span>{account.username !== adminUsername && <button onClick={() => void removeAdmin(account.username)}>Delete</button>}</div>)}</div></section>
