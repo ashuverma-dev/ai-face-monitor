@@ -51,8 +51,14 @@ button { cursor: pointer; }
 .auth-loading .auth-mark { margin: 0 auto 17px; }
 .auth-loading h1 { margin: 0; font-size: 21px; }
 .auth-loading p { color: var(--muted); font-size: 9px; }
+.auth-wakeup-note { display: block; margin-top: 13px; color: var(--orange); font-size: 9px; }
 .auth-progress { height: 5px; margin-top: 20px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.07); }
 .auth-progress span { width: 45%; height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, var(--primary), var(--lavender)); animation: auth-loading 1.1s ease-in-out infinite alternate; }
+.auth-unavailable .auth-mark { background: linear-gradient(145deg, #b94d68, var(--red)); }
+.auth-unavailable .eyebrow { margin-bottom: 9px; color: var(--red); }
+.auth-unavailable p { max-width: 340px; margin: 0 auto; line-height: 1.65; }
+.auth-unavailable small { display: block; margin-top: 14px; color: var(--dim); font-size: 9px; }
+.auth-retry { width: 100%; margin-top: 22px; }
 @keyframes auth-loading { to { transform: translateX(122%); } }
 
 .student-portal-shell { min-height: 100vh; padding: 24px clamp(14px, 4vw, 58px) 45px; background: radial-gradient(circle at 80% 0, rgba(166,99,204,.2), transparent 32%), radial-gradient(circle at 0 75%, rgba(111,45,189,.14), transparent 28%), var(--bg); }

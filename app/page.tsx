@@ -72,7 +72,7 @@ type HealthPayload = {
   registered_students: number;
 };
 
-type AuthMode = "checking" | "setup" | "login" | "authenticated";
+type AuthMode = "checking" | "setup" | "login" | "unavailable" | "authenticated";
 type UserRole = "admin" | "student";
 
 type AuthToken = {
@@ -184,7 +184,19 @@ function Toast({ message }: { message: string }) {
   return <div className="toast" role="status"><span>✓</span>{message}</div>;
 }
 
-function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated: (role: UserRole) => void }) {
+function AuthScreen({
+  mode,
+  connectionError,
+  slowConnection,
+  onRetry,
+  onAuthenticated,
+}: {
+  mode: AuthMode;
+  connectionError: string;
+  slowConnection: boolean;
+  onRetry: () => void;
+  onAuthenticated: (role: UserRole) => void;
+}) {
   const [loginRole, setLoginRole] = useState<UserRole>("admin");
   const [roll, setRoll] = useState("");
   const [password, setPassword] = useState("");
@@ -193,7 +205,11 @@ function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated
   const [submitting, setSubmitting] = useState(false);
 
   if (mode === "checking") {
-    return <main className="auth-shell"><section className="auth-card auth-loading"><div className="auth-mark">AI</div><h1>Checking secure session</h1><p>Connecting to the protected attendance system...</p><div className="auth-progress"><span /></div></section></main>;
+    return <main className="auth-shell"><section className="auth-card auth-loading" aria-live="polite"><div className="auth-mark">AI</div><h1>Checking secure session</h1><p>{slowConnection ? "The AI server is waking up. This can take up to 30 seconds on the first visit." : "Connecting to the protected attendance system..."}</p><div className="auth-progress"><span /></div>{slowConnection && <small className="auth-wakeup-note">Please keep this page open.</small>}</section></main>;
+  }
+
+  if (mode === "unavailable") {
+    return <main className="auth-shell"><section className="auth-card auth-loading auth-unavailable" role="alert"><div className="auth-mark">!</div><span className="eyebrow">Connection problem</span><h1>AI server is not responding</h1><p>{connectionError || "The attendance server could not be reached."}</p><button className="primary-button auth-retry" type="button" onClick={onRetry}>Try Again</button><small>Your data is safe. No attendance action was performed.</small></section></main>;
   }
 
   const isSetup = mode === "setup";
@@ -247,6 +263,9 @@ function AuthScreen({ mode, onAuthenticated }: { mode: AuthMode; onAuthenticated
 
 export default function Home() {
   const [authMode, setAuthMode] = useState<AuthMode>("checking");
+  const [authRetry, setAuthRetry] = useState(0);
+  const [connectionError, setConnectionError] = useState("");
+  const [slowConnection, setSlowConnection] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
   const [page, setPage] = useState<PageKey>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -293,10 +312,20 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
+    let serverReached = false;
+    const controller = new AbortController();
+    const slowTimer = window.setTimeout(() => {
+      if (active) setSlowConnection(true);
+    }, 6000);
+    const timeout = window.setTimeout(() => controller.abort(), 30000);
     const checkAuthentication = async () => {
       try {
-        const status = await apiRequest<{ configured: boolean }>("/auth/status");
+        const status = await apiRequest<{ configured: boolean }>("/auth/status", { signal: controller.signal });
         if (!active) return;
+        serverReached = true;
+        window.clearTimeout(slowTimer);
+        window.clearTimeout(timeout);
+        setSlowConnection(false);
         if (!status.configured) {
           setAuthMode("setup");
           return;
@@ -317,13 +346,30 @@ export default function Home() {
           setRole(storedRole);
           setAuthMode("authenticated");
         }
-      } catch {
-        if (active) setAuthMode("login");
+      } catch (reason) {
+        if (!active) return;
+        window.clearTimeout(slowTimer);
+        window.clearTimeout(timeout);
+        setSlowConnection(false);
+        if (serverReached) {
+          setConnectionError("");
+          setAuthMode("login");
+          return;
+        }
+        setConnectionError(reason instanceof DOMException && reason.name === "AbortError"
+          ? "The server took longer than 30 seconds to start. Please try again."
+          : "Check your internet connection and try again. The server may be temporarily asleep.");
+        setAuthMode("unavailable");
       }
     };
     void checkAuthentication();
-    return () => { active = false; };
-  }, []);
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(timeout);
+    };
+  }, [authRetry]);
 
   useEffect(() => {
     const expireSession = () => {
@@ -357,7 +403,18 @@ export default function Home() {
   };
 
   if (authMode !== "authenticated") {
-    return <AuthScreen mode={authMode} onAuthenticated={(authenticatedRole) => { setRole(authenticatedRole); setAuthMode("authenticated"); }} />;
+    return <AuthScreen
+      mode={authMode}
+      connectionError={connectionError}
+      slowConnection={slowConnection}
+      onRetry={() => {
+        setConnectionError("");
+        setSlowConnection(false);
+        setAuthMode("checking");
+        setAuthRetry((current) => current + 1);
+      }}
+      onAuthenticated={(authenticatedRole) => { setRole(authenticatedRole); setAuthMode("authenticated"); }}
+    />;
   }
 
   if (role === "student") {
