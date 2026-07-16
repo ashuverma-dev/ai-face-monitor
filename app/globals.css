@@ -50,6 +50,7 @@ button { cursor: pointer; }
 .auth-error { margin: 0; padding: 10px 12px; border: 1px solid rgba(234,116,139,.28); border-radius: 10px; color: #ff9bad; background: rgba(234,116,139,.08); font-size: 9px; font-weight: 750; }
 .auth-submit { width: 100%; min-height: 46px; margin-top: 3px; }
 .auth-submit:disabled { opacity: .6; cursor: wait; }
+.auth-text-button { width: 100%; min-height: 34px; border: 0; color: var(--lavender); background: transparent; font-weight: 800; }
 .auth-security { margin-top: 18px; padding: 11px 12px; display: flex; align-items: center; gap: 9px; border-radius: 11px; color: var(--green); background: rgba(143,214,176,.07); }
 .auth-security p { margin: 0; color: var(--muted); font-size: 8px; }
 .auth-loading { text-align: center; }
@@ -286,6 +287,33 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
 .log-actions { display: flex; align-items: center; gap: 6px; }
 .log-actions select { max-width: 145px; }
 .custom-report > div:last-child { display: flex; gap: 7px; }
+.manual-attendance { margin-bottom: 14px; }
+.manual-attendance .card-heading { align-items: end; }
+.manual-attendance .card-heading label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; }
+.manual-attendance input, .compact-form input { min-height: 40px; border: 1px solid rgba(166,99,204,.27); border-radius: 10px; padding: 0 12px; color: var(--text); background: rgba(23,17,35,.7); }
+.attendance-totals { display: flex; gap: 8px; margin: 14px 0; }
+.attendance-totals span { min-width: 130px; padding: 10px 12px; display: flex; justify-content: space-between; border-radius: 10px; background: rgba(255,255,255,.04); }
+.manual-attendance-list { display: grid; gap: 7px; }
+.manual-attendance-row { min-height: 58px; padding: 9px 11px; display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; align-items: center; gap: 12px; border: 1px solid rgba(166,99,204,.14); border-radius: 11px; background: rgba(255,255,255,.025); }
+.manual-attendance-row > div:first-child { display: grid; gap: 3px; }
+.manual-attendance-row small { color: var(--muted); }
+.manual-attendance-row > div:last-child { display: flex; gap: 5px; }
+.manual-attendance-row button { min-height: 34px; padding: 0 10px; border: 1px solid rgba(166,99,204,.25); border-radius: 8px; color: var(--muted); background: transparent; }
+.manual-attendance-row .active-present { color: var(--green); border-color: rgba(143,214,176,.45); background: rgba(143,214,176,.08); }
+.manual-attendance-row .active-absent { color: var(--red); border-color: rgba(234,116,139,.45); background: rgba(234,116,139,.08); }
+.attendance-pill { padding: 6px 8px; border-radius: 8px; font-size: 9px; font-weight: 900; }
+.attendance-pill.present { color: var(--green); background: rgba(143,214,176,.08); }
+.attendance-pill.absent { color: var(--red); background: rgba(234,116,139,.08); }
+.compact-form { display: grid; gap: 7px; margin-top: 10px; }
+.recovery-code { margin-top: 11px; padding: 10px; display: grid; gap: 5px; border: 1px solid rgba(143,214,176,.32); border-radius: 10px; background: rgba(143,214,176,.06); }
+.recovery-code code { overflow-wrap: anywhere; color: var(--green); font-size: 11px; }
+.recovery-code small, .admin-account-list small { color: var(--muted); }
+.admin-accounts-card { grid-column: span 2; }
+.admin-create-form { grid-template-columns: 1fr 1fr auto; }
+.admin-account-list { display: grid; gap: 6px; margin-top: 11px; }
+.admin-account-list > div { padding: 8px 9px; display: flex; align-items: center; justify-content: space-between; border-radius: 9px; background: rgba(255,255,255,.04); }
+.admin-account-list span { display: grid; gap: 2px; }
+.admin-account-list button { border: 0; color: var(--red); background: transparent; }
 .audit-list { display: grid; gap: 7px; }
 .audit-list > div { padding: 9px; display: grid; gap: 3px; border-radius: 9px; background: rgba(255,255,255,.04); }
 .audit-list span, .audit-list small { color: var(--muted); font-size: 10px; }
@@ -333,10 +361,16 @@ td { font-size: 11px; }
   .detection-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 20px; }
   .detection-panel hr { grid-column: 1 / -1; width: 100%; }
   .capture-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-accounts-card { grid-column: auto; }
+  .admin-create-form { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
   .custom-report { grid-template-columns: 1fr; }
+  .manual-attendance .card-heading { align-items: stretch; }
+  .manual-attendance-row { grid-template-columns: 1fr; }
+  .manual-attendance-row > div:last-child { width: 100%; }
+  .manual-attendance-row button { flex: 1; }
   .student-portal-shell { padding: 10px 12px 30px; }
   .student-portal-header { margin-bottom: 10px; }
   .student-welcome { padding: 20px; flex-wrap: wrap; }

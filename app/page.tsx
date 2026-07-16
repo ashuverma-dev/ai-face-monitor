@@ -80,6 +80,8 @@ type AuthToken = {
   token_type: "bearer";
   expires_in: number;
   role?: UserRole;
+  username?: string;
+  recovery_code?: string;
 };
 
 type StudentPortalPayload = {
@@ -95,6 +97,8 @@ type AppPreferences = {
 };
 
 type AuditEntry = { id: string; action: string; details: string; created_at: string };
+type AdminAccount = { username: string; created_at: string; recovery_ready: boolean; recovery_code?: string };
+type AttendanceRecord = { student_id: number; student_name: string; roll_number: string; department: string; attendance_date: string; status: "PRESENT" | "ABSENT"; source: "AI" | "MANUAL" | "NOT_RECORDED"; first_seen: string | null; updated_by: string | null };
 
 const TOKEN_KEY = "face-monitor-session-token";
 const ROLE_KEY = "face-monitor-session-role";
@@ -114,7 +118,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, { ...init, headers });
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    if (response.status === 401 && typeof window !== "undefined" && !path.endsWith("/auth/login")) {
+    if (response.status === 401 && typeof window !== "undefined" && !path.endsWith("/auth/login") && path !== "/auth/recovery/reset") {
       window.localStorage.removeItem(TOKEN_KEY);
       window.localStorage.removeItem(ROLE_KEY);
       window.localStorage.removeItem("face-monitor-admin-token");
@@ -205,12 +209,15 @@ function AuthScreen({
   connectionError: string;
   slowConnection: boolean;
   onRetry: () => void;
-  onAuthenticated: (role: UserRole) => void;
+  onAuthenticated: (role: UserRole, username?: string) => void;
 }) {
   const [loginRole, setLoginRole] = useState<UserRole>("admin");
+  const [username, setUsername] = useState("admin");
   const [roll, setRoll] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [recovering, setRecovering] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -225,17 +232,18 @@ function AuthScreen({
 
   const isSetup = mode === "setup";
   const activeRole: UserRole = isSetup ? "admin" : loginRole;
+  const isRecovery = !isSetup && activeRole === "admin" && recovering;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError("");
-    if (isSetup && password !== confirmPassword) {
+    if ((isSetup || isRecovery) && password !== confirmPassword) {
       setError("Passwords do not match.");
       return;
     }
     setSubmitting(true);
     try {
-      const path = isSetup ? "/auth/setup" : activeRole === "student" ? "/student/auth/login" : "/auth/login";
-      const body = activeRole === "student" ? { roll, password } : { password };
+      const path = isRecovery ? "/auth/recovery/reset" : isSetup ? "/auth/setup" : activeRole === "student" ? "/student/auth/login" : "/auth/login";
+      const body = isRecovery ? { username, recovery_code: recoveryCode, new_password: password } : activeRole === "student" ? { roll, password } : { username, password };
       const token = await apiRequest<AuthToken>(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -244,7 +252,7 @@ function AuthScreen({
       window.localStorage.setItem(TOKEN_KEY, token.access_token);
       window.localStorage.setItem(ROLE_KEY, activeRole);
       window.localStorage.removeItem("face-monitor-admin-token");
-      onAuthenticated(activeRole);
+      onAuthenticated(activeRole, token.username || username);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Login failed.");
       setSubmitting(false);
@@ -255,17 +263,19 @@ function AuthScreen({
     <section className="auth-card">
       <div className="auth-brand"><div className="auth-mark">AI</div><div><span>Secure administration</span><strong>AI Face Monitor</strong></div></div>
       {!isSetup && <div className="auth-role-tabs" role="tablist" aria-label="Choose login type">
-        <button type="button" role="tab" aria-selected={loginRole === "admin"} className={loginRole === "admin" ? "active" : ""} onClick={() => { setLoginRole("admin"); setError(""); }}>Teacher / Admin</button>
-        <button type="button" role="tab" aria-selected={loginRole === "student"} className={loginRole === "student" ? "active" : ""} onClick={() => { setLoginRole("student"); setError(""); }}>Student</button>
+        <button type="button" role="tab" aria-selected={loginRole === "admin"} className={loginRole === "admin" ? "active" : ""} onClick={() => { setLoginRole("admin"); setRecovering(false); setError(""); }}>Teacher / Admin</button>
+        <button type="button" role="tab" aria-selected={loginRole === "student"} className={loginRole === "student" ? "active" : ""} onClick={() => { setLoginRole("student"); setRecovering(false); setError(""); }}>Student</button>
       </div>}
-      <div className="auth-copy"><span className="eyebrow">{isSetup ? "First-time security setup" : activeRole === "student" ? "Private student access" : "Protected admin access"}</span><h1>{isSetup ? "Create Admin Password" : activeRole === "student" ? "Student Portal" : "Welcome back"}</h1><p>{isSetup ? "Create a strong password to protect students, recognition logs, captured images and delete actions." : activeRole === "student" ? "Use the roll number and portal password provided by your teacher." : "Enter your admin password to open the attendance dashboard."}</p></div>
+      <div className="auth-copy"><span className="eyebrow">{isSetup ? "First-time security setup" : activeRole === "student" ? "Private student access" : isRecovery ? "Secure account recovery" : "Protected admin access"}</span><h1>{isSetup ? "Create Admin Password" : activeRole === "student" ? "Student Portal" : isRecovery ? "Reset Admin Password" : "Welcome back"}</h1><p>{isSetup ? "Create a strong password to protect students, recognition logs, captured images and delete actions." : activeRole === "student" ? "Use the roll number and portal password provided by your teacher." : isRecovery ? "Use the recovery code previously saved from System Settings." : "Enter your teacher/admin account details to open the dashboard."}</p></div>
       <form className="auth-form" onSubmit={submit}>
-        {activeRole === "admin" ? <label>Admin username<input value="admin" readOnly aria-label="Admin username" /></label> : <label>Roll number<input value={roll} onChange={(event) => setRoll(event.target.value)} autoComplete="username" placeholder="Enter your roll number" required /></label>}
-        <label>Password<div className="password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isSetup ? "new-password" : "current-password"} placeholder="Enter secure password" minLength={activeRole === "student" ? 8 : 12} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button></div></label>
-        {isSetup && <label>Confirm password<div className="password-field"><input type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="Enter password again" minLength={12} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide confirmed password" : "Show confirmed password"}>{showPassword ? "Hide" : "Show"}</button></div></label>}
-        {isSetup && <p className="password-rule">Minimum 12 characters with uppercase, lowercase, number and special character.</p>}
+        {activeRole === "admin" ? <label>Admin username<input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" aria-label="Admin username" required /></label> : <label>Roll number<input value={roll} onChange={(event) => setRoll(event.target.value)} autoComplete="username" placeholder="Enter your roll number" required /></label>}
+        {isRecovery && <label>Recovery code<input value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value)} autoComplete="one-time-code" placeholder="XXXXXX-XXXXXX-XXXXXX-XXXXXX" required /></label>}
+        <label>{isRecovery ? "New password" : "Password"}<div className="password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isSetup || isRecovery ? "new-password" : "current-password"} placeholder={isRecovery ? "Create a new secure password" : "Enter secure password"} minLength={activeRole === "student" ? 8 : 12} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button></div></label>
+        {(isSetup || isRecovery) && <label>Confirm password<div className="password-field"><input type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="Enter password again" minLength={12} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide confirmed password" : "Show confirmed password"}>{showPassword ? "Hide" : "Show"}</button></div></label>}
+        {(isSetup || isRecovery) && <p className="password-rule">Minimum 12 characters with uppercase, lowercase, number and special character.</p>}
         {error && <p className="auth-error" role="alert">{error}</p>}
-        <button className="primary-button auth-submit" type="submit" disabled={submitting}>{submitting ? "Signing in..." : isSetup ? "Create Secure Admin" : activeRole === "student" ? "Open My Attendance" : "Log in securely"}</button>
+        <button className="primary-button auth-submit" type="submit" disabled={submitting}>{submitting ? "Please wait..." : isRecovery ? "Reset Password" : isSetup ? "Create Secure Admin" : activeRole === "student" ? "Open My Attendance" : "Log in securely"}</button>
+        {!isSetup && activeRole === "admin" && <button className="auth-text-button" type="button" onClick={() => { setRecovering((value) => !value); setError(""); setPassword(""); setConfirmPassword(""); }}>{isRecovery ? "Back to admin login" : "Forgot password?"}</button>}
       </form>
       <div className="auth-security"><span>✓</span><p>{activeRole === "student" ? "You can only view your own profile and attendance." : "Password hashing • signed 8-hour session • protected private data"}</p></div>
     </section>
@@ -278,6 +288,7 @@ export default function Home() {
   const [connectionError, setConnectionError] = useState("");
   const [slowConnection, setSlowConnection] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
+  const [adminUsername, setAdminUsername] = useState("admin");
   const [page, setPage] = useState<PageKey>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
@@ -377,8 +388,9 @@ export default function Home() {
           window.localStorage.setItem(TOKEN_KEY, legacyToken);
           window.localStorage.setItem(ROLE_KEY, "admin");
         }
-        await apiRequest<{ authenticated: boolean }>(storedRole === "student" ? "/student/auth/session" : "/auth/session");
+        const session = await apiRequest<{ authenticated: boolean; username?: string }>(storedRole === "student" ? "/student/auth/session" : "/auth/session");
         if (active) {
+          if (storedRole === "admin") setAdminUsername(session.username || "admin");
           setRole(storedRole);
           setAuthMode("authenticated");
         }
@@ -449,7 +461,7 @@ export default function Home() {
         setAuthMode("checking");
         setAuthRetry((current) => current + 1);
       }}
-      onAuthenticated={(authenticatedRole) => { setRole(authenticatedRole); setAuthMode("authenticated"); }}
+      onAuthenticated={(authenticatedRole, username) => { setRole(authenticatedRole); if (authenticatedRole === "admin") setAdminUsername(username || "admin"); setAuthMode("authenticated"); }}
     />;
   }
 
@@ -510,7 +522,7 @@ export default function Home() {
         {page === "logs" && <Logs showToast={showToast} students={students} />}
         {page === "images" && <Images navigate={navigate} showToast={showToast} />}
         {page === "reports" && <Reports showToast={showToast} students={students} />}
-        {page === "settings" && <Settings preferences={preferences} onSave={savePreferences} showToast={showToast} />}
+        {page === "settings" && <Settings preferences={preferences} onSave={savePreferences} showToast={showToast} adminUsername={adminUsername} />}
       </main>
 
       {showStudentForm && (
@@ -591,7 +603,7 @@ function StudentPortal({ onLogout }: { onLogout: () => void }) {
     <section className="panel student-attendance-card">
       <div className="card-heading"><div><h2>My Attendance History</h2><p>Only your verified recognition records are shown.</p></div><span className="student-record-count">{data.attendance.length} records</span></div>
       <div className="responsive-table"><table><thead><tr><th>Date & Time</th><th>Confidence</th><th>Status</th></tr></thead><tbody>
-        {data.attendance.map((record) => <tr key={record.id}><td>{formatLogTime(record.detected_at, true)}</td><td>{Math.round(record.confidence * 100)}%</td><td><span className="table-status success">Present</span></td></tr>)}
+        {data.attendance.map((record) => <tr key={`${record.detected_at}-${record.id}`}><td>{formatLogTime(record.detected_at, true)}</td><td>{record.status === "Present" ? `${Math.round(record.confidence * 100)}%` : "—"}</td><td><span className={record.status === "Present" ? "table-status success" : "table-status unknown"}>{record.status}</span></td></tr>)}
         {!data.attendance.length && <tr><td className="table-empty" colSpan={3}>No attendance has been recorded yet.</td></tr>}
       </tbody></table></div>
     </section>
@@ -1019,6 +1031,29 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
   const [startDate, setStartDate] = useState(`${today.slice(0, 8)}01`);
   const [endDate, setEndDate] = useState(today);
   const [studentFilter, setStudentFilter] = useState("");
+  const [attendanceDate, setAttendanceDate] = useState(today);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
+
+  const loadAttendance = useCallback(async (dateValue: string) => {
+    setAttendanceLoading(true);
+    try { setAttendance(await apiRequest<AttendanceRecord[]>(`/attendance?attendance_date=${dateValue}`)); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Attendance could not be loaded"); }
+    finally { setAttendanceLoading(false); }
+  }, [showToast]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadAttendance(attendanceDate), 0);
+    return () => window.clearTimeout(timer);
+  }, [attendanceDate, loadAttendance]);
+
+  const saveAttendance = async (record: AttendanceRecord, status: "PRESENT" | "ABSENT") => {
+    try {
+      await apiRequest("/attendance/manual", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: record.student_id, attendance_date: attendanceDate, status }) });
+      await loadAttendance(attendanceDate);
+      showToast(`${record.student_name} marked ${status.toLowerCase()}`);
+    } catch (error) { showToast(error instanceof Error ? error.message : "Attendance could not be updated"); }
+  };
 
   const download = async (period: ReportPeriod, fileType: ReportType) => {
     const key = `${period}-${fileType}`;
@@ -1060,6 +1095,7 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
     finally { setDownloading(""); }
   };
   return <><PageHeader title="Reports" subtitle="Generate real attendance reports from the live database" /><div className="page-body">
+    <section className="panel manual-attendance"><div className="card-heading"><div><span className="eyebrow">Official daily record</span><h2>Manual Attendance</h2><p>AI records one entry per student each day. Correct any missing student here.</p></div><label>Date<input type="date" value={attendanceDate} max={today} onChange={(event) => setAttendanceDate(event.target.value)} /></label></div><div className="attendance-totals"><span>Present <strong>{attendance.filter((item) => item.status === "PRESENT").length}</strong></span><span>Absent <strong>{attendance.filter((item) => item.status === "ABSENT").length}</strong></span></div><div className="manual-attendance-list">{attendance.map((record) => <div className="manual-attendance-row" key={record.student_id}><div><strong>{record.student_name}</strong><small>{record.roll_number} · {record.department || "No department"}</small></div><span className={`attendance-pill ${record.status.toLowerCase()}`}>{record.status}{record.source === "MANUAL" ? " · MANUAL" : ""}</span><div><button className={record.status === "PRESENT" ? "active-present" : ""} onClick={() => void saveAttendance(record, "PRESENT")}>Present</button><button className={record.status === "ABSENT" && record.source === "MANUAL" ? "active-absent" : ""} onClick={() => void saveAttendance(record, "ABSENT")}>Absent</button></div></div>)}{attendanceLoading && <div className="empty-list">Loading daily attendance...</div>}{!attendanceLoading && !attendance.length && <div className="empty-list">Register students to manage daily attendance.</div>}</div></section>
     <section className="panel custom-report"><div><span className="eyebrow">Custom report</span><h2>Filter Attendance</h2><p>Choose dates and optionally narrow the file to one student.</p></div><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>To<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><select value={studentFilter} onChange={(event) => setStudentFilter(event.target.value)} aria-label="Filter report by student"><option value="">All students</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select><div><button className="primary-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("xlsx")}>Filtered Excel</button><button className="ghost-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("pdf")}>Filtered PDF</button></div></section>
     <div className="report-grid">{reportCard("daily", "Today", "Daily Report", "Download today's recognized students, unknown events and attendance summary.")}{reportCard("monthly", "This Month", "Monthly Report", "Download the current month's complete attendance activity and summary.")}</div>
     <section className="panel generated-files"><div className="card-heading"><div><h3>Generated Files</h3><p>Reports are saved in your browser&apos;s Downloads folder.</p></div><span className="report-live-badge">● Live database</span></div>
@@ -1068,11 +1104,46 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
   </div></>;
 }
 
-function Settings({ preferences, onSave, showToast }: { preferences: AppPreferences; onSave: (preferences: AppPreferences) => void; showToast: (message: string) => void }) {
+function Settings({ preferences, onSave, showToast, adminUsername }: { preferences: AppPreferences; onSave: (preferences: AppPreferences) => void; showToast: (message: string) => void; adminUsername: string }) {
   const [draft, setDraft] = useState(preferences);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [admins, setAdmins] = useState<AdminAccount[]>([]);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newAdminUsername, setNewAdminUsername] = useState("");
+  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [revealedCode, setRevealedCode] = useState("");
   const thresholdLabel = draft.threshold >= 70 ? "Strict" : draft.threshold <= 42 ? "Flexible" : "Balanced";
-  useEffect(() => { apiRequest<AuditEntry[]>("/audit").then(setAudit).catch(() => setAudit([])); }, []);
+  const loadAdmins = useCallback(async () => { try { setAdmins(await apiRequest<AdminAccount[]>("/auth/admins")); } catch { setAdmins([]); } }, []);
+  useEffect(() => {
+    apiRequest<AuditEntry[]>("/audit").then(setAudit).catch(() => setAudit([]));
+    const timer = window.setTimeout(() => void loadAdmins(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadAdmins]);
+
+  const changePassword = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      const token = await apiRequest<AuthToken>("/auth/password/change", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) });
+      window.localStorage.setItem(TOKEN_KEY, token.access_token); setCurrentPassword(""); setNewPassword(""); showToast("Admin password changed");
+    } catch (error) { showToast(error instanceof Error ? error.message : "Password could not be changed"); }
+  };
+  const createAdmin = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      const created = await apiRequest<AdminAccount>("/auth/admins", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: newAdminUsername, password: newAdminPassword }) });
+      setRevealedCode(`${created.username}: ${created.recovery_code}`); setNewAdminUsername(""); setNewAdminPassword(""); await loadAdmins(); showToast("Teacher/admin account created");
+    } catch (error) { showToast(error instanceof Error ? error.message : "Admin account could not be created"); }
+  };
+  const removeAdmin = async (username: string) => {
+    if (!window.confirm(`Delete admin account ${username}?`)) return;
+    try { await apiRequest(`/auth/admins/${encodeURIComponent(username)}`, { method: "DELETE" }); await loadAdmins(); showToast("Admin account deleted"); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Admin account could not be deleted"); }
+  };
+  const rotateRecoveryCode = async () => {
+    try { const result = await apiRequest<{ recovery_code: string }>("/auth/recovery-code", { method: "POST" }); setRevealedCode(`${adminUsername}: ${result.recovery_code}`); await loadAdmins(); showToast("New recovery code generated"); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Recovery code could not be generated"); }
+  };
   const downloadBackup = async () => {
     try {
       const { blob, filename } = await apiDownload("/backup"); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); showToast("Database backup saved in Downloads");
@@ -1098,6 +1169,9 @@ function Settings({ preferences, onSave, showToast }: { preferences: AppPreferen
       </section>
       <section className="panel setting-card system-info"><span className="eyebrow">Active Configuration</span><h2>Monitoring Setup</h2><p>The values below are sent to the live recognition screen.</p><ul><li>{draft.threshold}% face match threshold</li><li>{draft.mirrorPreview ? "Mirrored" : "Natural"} camera preview</li><li>Scan effect {draft.scanEffect ? "enabled" : "disabled"}</li></ul></section>
       <section className="panel setting-card"><span className="eyebrow">Data safety</span><h2>Database Backup</h2><p>Download a transaction-safe copy of students, attendance records and settings.</p><button className="primary-button" onClick={() => void downloadBackup()}>Download Backup</button></section>
+      <section className="panel setting-card security-card"><span className="eyebrow">Signed in as {adminUsername}</span><h2>Change Password</h2><p>Changing your password immediately replaces your current secure session.</p><form className="compact-form" onSubmit={changePassword}><input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} placeholder="Current password" minLength={12} required /><input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="New strong password" minLength={12} required /><button className="primary-button" type="submit">Change Password</button></form></section>
+      <section className="panel setting-card security-card"><span className="eyebrow">Account recovery</span><h2>Recovery Code</h2><p>Generate and safely store this code. Each code can reset the password once.</p><button className="ghost-button" onClick={() => void rotateRecoveryCode()}>Generate New Code</button>{revealedCode && <div className="recovery-code" role="status"><strong>Save this now</strong><code>{revealedCode}</code><small>It will not be shown again after leaving this page.</small></div>}</section>
+      <section className="panel setting-card admin-accounts-card"><span className="eyebrow">Team access</span><h2>Teacher / Admin Accounts</h2><p>Create separate secure logins instead of sharing one password.</p><form className="compact-form admin-create-form" onSubmit={createAdmin}><input value={newAdminUsername} onChange={(event) => setNewAdminUsername(event.target.value)} placeholder="Username" required /><input type="password" value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} placeholder="Strong password" minLength={12} required /><button className="primary-button" type="submit">Add Account</button></form><div className="admin-account-list">{admins.map((account) => <div key={account.username}><span><strong>{account.username}</strong><small>{account.recovery_ready ? "Recovery ready" : "Recovery code needed"}</small></span>{account.username !== adminUsername && <button onClick={() => void removeAdmin(account.username)}>Delete</button>}</div>)}</div></section>
       <section className="panel setting-card audit-card"><span className="eyebrow">Admin history</span><h2>Audit Activity</h2><p>Recent high-impact administrative actions.</p><div className="audit-list">{audit.slice(0, 6).map((item) => <div key={item.id}><strong>{item.action.replaceAll("_", " ")}</strong><span>{item.details}</span><small>{formatLogTime(item.created_at, true)}</small></div>)}{!audit.length && <div className="empty-list">No administrative activity yet.</div>}</div></section>
     </div>
   </>;
