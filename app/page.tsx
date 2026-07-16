@@ -88,8 +88,16 @@ type StudentPortalPayload = {
   attendance: { id: number; confidence: number; detected_at: string; status: string }[];
 };
 
+type AppPreferences = {
+  threshold: number;
+  mirrorPreview: boolean;
+  scanEffect: boolean;
+};
+
 const TOKEN_KEY = "face-monitor-session-token";
 const ROLE_KEY = "face-monitor-session-role";
+const PREFERENCES_KEY = "face-monitor-preferences";
+const DEFAULT_PREFERENCES: AppPreferences = { threshold: 50, mirrorPreview: true, scanEffect: true };
 
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "https://ai-face-monitor-api-ashu.onrender.com"
@@ -201,6 +209,7 @@ function AuthScreen({
   const [roll, setRoll] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -244,14 +253,14 @@ function AuthScreen({
     <section className="auth-card">
       <div className="auth-brand"><div className="auth-mark">AI</div><div><span>Secure administration</span><strong>AI Face Monitor</strong></div></div>
       {!isSetup && <div className="auth-role-tabs" role="tablist" aria-label="Choose login type">
-        <button type="button" className={loginRole === "admin" ? "active" : ""} onClick={() => { setLoginRole("admin"); setError(""); }}>Teacher / Admin</button>
-        <button type="button" className={loginRole === "student" ? "active" : ""} onClick={() => { setLoginRole("student"); setError(""); }}>Student</button>
+        <button type="button" role="tab" aria-selected={loginRole === "admin"} className={loginRole === "admin" ? "active" : ""} onClick={() => { setLoginRole("admin"); setError(""); }}>Teacher / Admin</button>
+        <button type="button" role="tab" aria-selected={loginRole === "student"} className={loginRole === "student" ? "active" : ""} onClick={() => { setLoginRole("student"); setError(""); }}>Student</button>
       </div>}
       <div className="auth-copy"><span className="eyebrow">{isSetup ? "First-time security setup" : activeRole === "student" ? "Private student access" : "Protected admin access"}</span><h1>{isSetup ? "Create Admin Password" : activeRole === "student" ? "Student Portal" : "Welcome back"}</h1><p>{isSetup ? "Create a strong password to protect students, recognition logs, captured images and delete actions." : activeRole === "student" ? "Use the roll number and portal password provided by your teacher." : "Enter your admin password to open the attendance dashboard."}</p></div>
       <form className="auth-form" onSubmit={submit}>
         {activeRole === "admin" ? <label>Admin username<input value="admin" readOnly aria-label="Admin username" /></label> : <label>Roll number<input value={roll} onChange={(event) => setRoll(event.target.value)} autoComplete="username" placeholder="Enter your roll number" required /></label>}
-        <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isSetup ? "new-password" : "current-password"} placeholder="Enter secure password" minLength={activeRole === "student" ? 8 : 12} required /></label>
-        {isSetup && <label>Confirm password<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="Enter password again" minLength={12} required /></label>}
+        <label>Password<div className="password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={isSetup ? "new-password" : "current-password"} placeholder="Enter secure password" minLength={activeRole === "student" ? 8 : 12} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button></div></label>
+        {isSetup && <label>Confirm password<div className="password-field"><input type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="Enter password again" minLength={12} required /><button type="button" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide confirmed password" : "Show confirmed password"}>{showPassword ? "Hide" : "Show"}</button></div></label>}
         {isSetup && <p className="password-rule">Minimum 12 characters with uppercase, lowercase, number and special character.</p>}
         {error && <p className="auth-error" role="alert">{error}</p>}
         <button className="primary-button auth-submit" type="submit" disabled={submitting}>{submitting ? "Signing in..." : isSetup ? "Create Secure Admin" : activeRole === "student" ? "Open My Attendance" : "Log in securely"}</button>
@@ -273,6 +282,7 @@ export default function Home() {
   const [showStudentForm, setShowStudentForm] = useState(false);
   const [toast, setToast] = useState("");
   const [cameraRunning, setCameraRunning] = useState(false);
+  const [preferences, setPreferences] = useState<AppPreferences>(DEFAULT_PREFERENCES);
   const [enrollStudent, setEnrollStudent] = useState<Student | null>(null);
   const [portalStudent, setPortalStudent] = useState<Student | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -282,6 +292,30 @@ export default function Home() {
     setToast(message);
     window.setTimeout(() => setToast(""), 3000);
   }, []);
+
+  useEffect(() => {
+    let timer: number | undefined;
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(PREFERENCES_KEY) || "null") as Partial<AppPreferences> | null;
+      if (!saved) return;
+      timer = window.setTimeout(() => {
+        setPreferences({
+          threshold: Math.max(30, Math.min(Number(saved.threshold) || DEFAULT_PREFERENCES.threshold, 95)),
+          mirrorPreview: saved.mirrorPreview !== false,
+          scanEffect: saved.scanEffect !== false,
+        });
+      }, 0);
+    } catch {
+      window.localStorage.removeItem(PREFERENCES_KEY);
+    }
+    return () => { if (timer) window.clearTimeout(timer); };
+  }, []);
+
+  const savePreferences = (next: AppPreferences) => {
+    setPreferences(next);
+    window.localStorage.setItem(PREFERENCES_KEY, JSON.stringify(next));
+    showToast("Recognition and camera settings saved");
+  };
 
   const navigate = (next: PageKey) => {
     setPage(next);
@@ -458,6 +492,7 @@ export default function Home() {
             running={cameraRunning}
             startCamera={startCamera}
             stopCamera={stopCamera}
+            preferences={preferences}
           />
         )}
         {page === "students" && (
@@ -473,7 +508,7 @@ export default function Home() {
         {page === "logs" && <Logs showToast={showToast} />}
         {page === "images" && <Images navigate={navigate} showToast={showToast} />}
         {page === "reports" && <Reports showToast={showToast} />}
-        {page === "settings" && <Settings showToast={showToast} />}
+        {page === "settings" && <Settings preferences={preferences} onSave={savePreferences} />}
       </main>
 
       {showStudentForm && (
@@ -564,6 +599,7 @@ function StudentPortal({ onLogout }: { onLogout: () => void }) {
 function StudentPasswordModal({ student, onClose, onSaved }: { student: Student; onClose: () => void; onSaved: () => void }) {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -584,11 +620,11 @@ function StudentPasswordModal({ student, onClose, onSaved }: { student: Student;
     }
   };
 
-  return <div className="modal-backdrop"><form className="modal" onSubmit={submit}>
-    <div className="modal-heading"><div><span className="eyebrow">Student portal access</span><h2>{student.portal_enabled ? "Reset Login Password" : "Create Student Login"}</h2></div><button type="button" onClick={onClose}>×</button></div>
+  return <div className="modal-backdrop"><form className="modal" role="dialog" aria-modal="true" aria-labelledby="student-password-title" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }} onSubmit={submit}>
+    <div className="modal-heading"><div><span className="eyebrow">Student portal access</span><h2 id="student-password-title">{student.portal_enabled ? "Reset Login Password" : "Create Student Login"}</h2></div><button type="button" onClick={onClose} aria-label="Close student password dialog">×</button></div>
     <div className="portal-student-summary"><span className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</span><div><strong>{student.name}</strong><p>Login ID: {student.roll}</p></div></div>
-    <label>New password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} autoComplete="new-password" placeholder="At least 8 characters" required /></label>
-    <label>Confirm password<input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength={8} autoComplete="new-password" placeholder="Enter password again" required /></label>
+    <label>New password<div className="password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} autoComplete="new-password" placeholder="At least 8 characters" required /><button type="button" onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? "Hide" : "Show"}</button></div></label>
+    <label>Confirm password<div className="password-field"><input type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength={8} autoComplete="new-password" placeholder="Enter password again" required /><button type="button" onClick={() => setShowPassword((visible) => !visible)}>{showPassword ? "Hide" : "Show"}</button></div></label>
     <p className="password-rule">Use at least 8 characters containing letters and numbers. Share it privately with this student.</p>
     {error && <p className="auth-error" role="alert">{error}</p>}
     <div className="modal-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving securely..." : "Save Student Login"}</button></div>
@@ -703,23 +739,36 @@ function Dashboard({ navigate, showToast }: { navigate: (page: PageKey) => void;
   );
 }
 
-function Monitoring({ videoRef, running, startCamera, stopCamera }: { videoRef: RefObject<HTMLVideoElement | null>; running: boolean; startCamera: () => void; stopCamera: () => void }) {
+function Monitoring({ videoRef, running, startCamera, stopCamera, preferences }: { videoRef: RefObject<HTMLVideoElement | null>; running: boolean; startCamera: () => void; stopCamera: () => void; preferences: AppPreferences }) {
   const [result, setResult] = useState<RecognitionResult | null>(null);
   const [summary, setSummary] = useState({ recognized: 0, unknown: 0, captures: 0 });
   const [recent, setRecent] = useState<string[]>([]);
+  const [connectionState, setConnectionState] = useState<"idle" | "connected" | "retrying">("idle");
   const requestActive = useRef(false);
+  const failureCount = useRef(0);
+  const retryAfter = useRef(0);
 
   useEffect(() => {
-    if (!running) return;
+    if (!running) {
+      failureCount.current = 0;
+      retryAfter.current = 0;
+      return;
+    }
+    let active = true;
     const recognize = async () => {
       const video = videoRef.current;
-      if (!video || video.readyState < 2 || requestActive.current) return;
+      if (!video || video.readyState < 2 || requestActive.current || Date.now() < retryAfter.current) return;
       requestActive.current = true;
       try {
         const blob = await frameBlob(video);
         const form = new FormData();
         form.append("image", blob, "camera.jpg");
+        form.append("threshold", String(preferences.threshold / 100));
         const next = await apiRequest<RecognitionResult>("/recognize", { method: "POST", body: form });
+        if (!active) return;
+        failureCount.current = 0;
+        retryAfter.current = 0;
+        setConnectionState("connected");
         setResult(next);
         if (next.status === "RECOGNIZED") {
           setSummary((value) => ({ ...value, recognized: value.recognized + 1, captures: value.captures + 1 }));
@@ -728,6 +777,10 @@ function Monitoring({ videoRef, running, startCamera, stopCamera }: { videoRef: 
           setSummary((value) => ({ ...value, unknown: value.unknown + 1, captures: value.captures + 1 }));
         }
       } catch (error) {
+        if (!active) return;
+        failureCount.current += 1;
+        if (failureCount.current >= 3) retryAfter.current = Date.now() + 5000;
+        setConnectionState("retrying");
         setResult({ status: "NO_FACE", name: error instanceof Error ? error.message : "AI server unavailable", confidence: 0 });
       } finally {
         requestActive.current = false;
@@ -735,21 +788,40 @@ function Monitoring({ videoRef, running, startCamera, stopCamera }: { videoRef: 
     };
     recognize();
     const timer = window.setInterval(recognize, 1400);
-    return () => window.clearInterval(timer);
-  }, [running, videoRef]);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [running, videoRef, preferences.threshold]);
 
-  const statusText = !running ? "Waiting" : result?.status === "RECOGNIZED" ? "Verified" : result?.status === "UNKNOWN" ? "Unknown face" : result?.name?.toLowerCase().includes("server") ? "AI server offline" : "Looking for a face";
+  const startMonitoring = () => {
+    failureCount.current = 0;
+    retryAfter.current = 0;
+    setConnectionState("idle");
+    startCamera();
+  };
+
+  const stopMonitoring = () => {
+    failureCount.current = 0;
+    retryAfter.current = 0;
+    setConnectionState("idle");
+    stopCamera();
+  };
+
+  const statusText = !running ? "Waiting" : connectionState === "retrying" ? "Reconnecting to AI server" : result?.status === "RECOGNIZED" ? "Verified" : result?.status === "UNKNOWN" ? "Unknown face" : "Looking for a face";
   const displayName = !running ? "—" : result?.status === "NO_FACE" ? "Scanning..." : result?.name || "Scanning...";
   return (
     <>
-      <PageHeader title="Live Monitoring" subtitle="Real-time browser camera preview and attendance" action={<div className="header-actions"><span className={running ? "live-status running" : "live-status"}>● {running ? "Running" : "Stopped"}</span><button className="primary-button small" onClick={running ? stopCamera : startCamera}>{running ? "■ Stop" : "▶ Start"}</button></div>} />
+      <PageHeader title="Live Monitoring" subtitle="Real-time browser camera preview and attendance" action={<div className="header-actions"><span className={running ? "live-status running" : "live-status"}>● {running ? "Running" : "Stopped"}</span><button className="primary-button small" onClick={running ? stopMonitoring : startMonitoring}>{running ? "■ Stop" : "▶ Start"}</button></div>} />
       <div className="monitor-layout page-body">
         <section className="camera-card">
-          <video ref={videoRef} autoPlay playsInline muted />
+          <video className={preferences.mirrorPreview ? "mirror-preview" : ""} ref={videoRef} autoPlay playsInline muted />
           {!running && <div className="camera-placeholder"><span>◉</span><strong>Camera is ready</strong><p>Click Start to begin the browser camera preview</p></div>}
-          {running && <div className="scanner-line" />}
+          {running && preferences.scanEffect && <div className="scanner-line" />}
         </section>
         <aside className="detection-panel">
+          <div className={`monitor-connection ${connectionState}`}><span />{connectionState === "retrying" ? "AI reconnecting" : connectionState === "connected" ? "AI connected" : "AI waiting"}</div>
+          <p className="threshold-note">Active match threshold: {preferences.threshold}%</p>
           <span className="eyebrow">Current Detection</span><h2 className={result?.status === "RECOGNIZED" ? "detection-good" : result?.status === "UNKNOWN" ? "detection-bad" : ""}>{displayName}</h2><p>Confidence: {result?.status === "RECOGNIZED" ? `${Math.round(result.confidence * 100)}%` : "—"}</p><p>Status: {statusText}</p>
           <hr /><h3>Session Summary</h3><div className="metric-line good"><span>Recognized</span><strong>{summary.recognized}</strong></div><div className="metric-line bad"><span>Unknown</span><strong>{summary.unknown}</strong></div><div className="metric-line"><span>Captures</span><strong>{summary.captures}</strong></div>
           <hr /><h3>Recent Recognitions</h3>{recent.length ? recent.map((item, index) => <div className="recent-detection" key={`${item}-${index}`}>{item}</div>) : <div className="empty-list">Recognition events will appear here.</div>}
@@ -760,6 +832,11 @@ function Monitoring({ videoRef, running, startCamera, stopCamera }: { videoRef: 
 }
 
 function Students({ students, setStudents, openForm, openCapture, openPortal, showToast }: { students: Student[]; setStudents: Dispatch<SetStateAction<Student[]>>; openForm: () => void; openCapture: (student: Student) => void; openPortal: (student: Student) => void; showToast: (message: string) => void }) {
+  const [search, setSearch] = useState("");
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const visibleStudents = normalizedSearch
+    ? students.filter((student) => [student.name, student.roll, student.course].some((value) => value.toLocaleLowerCase().includes(normalizedSearch)))
+    : students;
   const removeStudent = async (student: Student) => {
     if (!window.confirm(`Delete ${student.name} and all saved face data?`)) return;
     try {
@@ -773,7 +850,7 @@ function Students({ students, setStudents, openForm, openCapture, openPortal, sh
   return (
     <>
       <PageHeader title="Student Management" subtitle="Register students and manage face profiles" action={<button className="primary-button small" onClick={openForm}>+ Add Student</button>} />
-      <div className="page-body"><section className="panel students-panel"><div className="card-heading"><div><h3>Registered Students</h3><p>{students.length} student profiles</p></div><input className="search-input" placeholder="Search students..." /></div><div className="student-list">{students.map((student) => <article className="student-row" key={student.id}><div className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</div><div className="student-info"><strong>{student.name}</strong><p>{student.roll} • {student.course}</p></div><span className={student.ready ? "ready-badge" : "ready-badge pending"}>● {student.ready ? "Ready" : "Face needed"} • {student.images} images</span><div className="row-actions"><button onClick={() => openPortal(student)}>{student.portal_enabled ? "Reset Login" : "Create Login"}</button><button onClick={() => openCapture(student)}>Capture</button><button className="danger-link" onClick={() => removeStudent(student)}>Delete</button></div></article>)}</div></section></div>
+      <div className="page-body"><section className="panel students-panel"><div className="card-heading"><div><h3>Registered Students</h3><p>{normalizedSearch ? `${visibleStudents.length} of ${students.length} profiles` : `${students.length} student profiles`}</p></div><div className="student-search"><input className="search-input" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search students by name, roll number or department" placeholder="Search name, roll or department..." />{search && <button type="button" onClick={() => setSearch("")} aria-label="Clear student search">Clear</button>}</div></div><div className="student-list">{visibleStudents.map((student) => <article className="student-row" key={student.id}><div className="avatar">{student.name.split(" ").map((word) => word[0]).join("").slice(0, 2)}</div><div className="student-info"><strong>{student.name}</strong><p>{student.roll} • {student.course}</p></div><span className={student.ready ? "ready-badge" : "ready-badge pending"}>● {student.ready ? "Ready" : "Face needed"} • {student.images} images</span><div className="row-actions"><button onClick={() => openPortal(student)}>{student.portal_enabled ? "Reset Login" : "Create Login"}</button><button onClick={() => openCapture(student)}>Capture</button><button className="danger-link" onClick={() => removeStudent(student)}>Delete</button></div></article>)}{!visibleStudents.length && <div className="student-no-results"><strong>No matching students</strong><p>Try a different name, roll number or department.</p><button type="button" className="ghost-button" onClick={() => setSearch("")}>Clear Search</button></div>}</div></section></div>
     </>
   );
 }
@@ -963,9 +1040,29 @@ function Reports({ showToast }: { showToast: (message: string) => void }) {
   </div></>;
 }
 
-function Settings({ showToast }: { showToast: (message: string) => void }) {
-  const [threshold, setThreshold] = useState(50);
-  return <><PageHeader title="System Settings" subtitle="Configure recognition and web preferences" /><div className="page-body settings-grid"><section className="panel setting-card"><span className="eyebrow">Recognition</span><h2>Matching Threshold</h2><p>Adjust how strict face matching should be.</p><div className="range-label"><span>Balanced</span><strong>{threshold}%</strong></div><input type="range" min="30" max="95" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} /></section><section className="panel setting-card"><span className="eyebrow">Camera</span><h2>Browser Camera</h2><p>Camera permission is requested only when Live Monitoring starts.</p><label className="switch-row"><span>Mirror preview</span><input type="checkbox" defaultChecked /></label><label className="switch-row"><span>Show scan effect</span><input type="checkbox" defaultChecked /></label></section><section className="panel setting-card"><span className="eyebrow">Data</span><h2>Web Preview Data</h2><p>This first web version keeps demo data on the current device.</p><button className="primary-button" onClick={() => showToast("Settings saved on this device")}>Save Settings</button></section><section className="panel setting-card system-info"><span className="eyebrow">System</span><h2>Technology</h2><p>Responsive React interface prepared for a Python recognition API.</p><ul><li>Responsive web frontend</li><li>Browser camera access</li><li>Python API ready architecture</li></ul></section></div></>;
+function Settings({ preferences, onSave }: { preferences: AppPreferences; onSave: (preferences: AppPreferences) => void }) {
+  const [draft, setDraft] = useState(preferences);
+  const thresholdLabel = draft.threshold >= 70 ? "Strict" : draft.threshold <= 42 ? "Flexible" : "Balanced";
+  return <>
+    <PageHeader title="System Settings" subtitle="Configure recognition and camera preferences" />
+    <div className="page-body settings-grid">
+      <section className="panel setting-card">
+        <span className="eyebrow">Recognition</span><h2>Matching Threshold</h2><p>Higher values require a closer face match and reduce false positives.</p>
+        <div className="range-label"><span>{thresholdLabel}</span><strong>{draft.threshold}%</strong></div>
+        <input type="range" min="30" max="95" value={draft.threshold} aria-label="Face matching threshold" onChange={(event) => setDraft((current) => ({ ...current, threshold: Number(event.target.value) }))} />
+      </section>
+      <section className="panel setting-card">
+        <span className="eyebrow">Camera</span><h2>Browser Camera</h2><p>These choices apply immediately after you save and open Live Monitoring.</p>
+        <label className="switch-row"><span>Mirror preview</span><input type="checkbox" checked={draft.mirrorPreview} onChange={(event) => setDraft((current) => ({ ...current, mirrorPreview: event.target.checked }))} /></label>
+        <label className="switch-row"><span>Show scan effect</span><input type="checkbox" checked={draft.scanEffect} onChange={(event) => setDraft((current) => ({ ...current, scanEffect: event.target.checked }))} /></label>
+      </section>
+      <section className="panel setting-card">
+        <span className="eyebrow">Preferences</span><h2>Save on This Device</h2><p>Your recognition and camera preferences remain available after refreshing the website.</p>
+        <div className="settings-actions"><button className="primary-button" onClick={() => onSave(draft)}>Save Settings</button><button className="ghost-button" onClick={() => setDraft(DEFAULT_PREFERENCES)}>Reset Defaults</button></div>
+      </section>
+      <section className="panel setting-card system-info"><span className="eyebrow">Active Configuration</span><h2>Monitoring Setup</h2><p>The values below are sent to the live recognition screen.</p><ul><li>{draft.threshold}% face match threshold</li><li>{draft.mirrorPreview ? "Mirrored" : "Natural"} camera preview</li><li>Scan effect {draft.scanEffect ? "enabled" : "disabled"}</li></ul></section>
+    </div>
+  </>;
 }
 
 function StudentModal({ onClose, onSave, nextId }: { onClose: () => void; onSave: (student: Student) => Promise<void>; nextId: number }) {
@@ -977,7 +1074,7 @@ function StudentModal({ onClose, onSave, nextId }: { onClose: () => void; onSave
     try { await onSave({ id: nextId, name, roll, course, images: 0, ready: false }); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Student could not be saved."); setSaving(false); }
   };
-  return <div className="modal-backdrop"><form className="modal" onSubmit={submit}><div className="modal-heading"><div><span className="eyebrow">New Profile</span><h2>Register Student</h2></div><button type="button" onClick={onClose}>×</button></div><label>Student name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Enter full name" required /></label><label>Roll number<input value={roll} onChange={(event) => setRoll(event.target.value)} placeholder="Enter roll number" required /></label><label>Department<select value={course} onChange={(event) => setCourse(event.target.value)}><option>Computer Science</option><option>Information Technology</option><option>Business Administration</option><option>Other</option></select></label>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving..." : "Register Student"}</button></div></form></div>;
+  return <div className="modal-backdrop"><form className="modal" role="dialog" aria-modal="true" aria-labelledby="register-student-title" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }} onSubmit={submit}><div className="modal-heading"><div><span className="eyebrow">New Profile</span><h2 id="register-student-title">Register Student</h2></div><button type="button" onClick={onClose} aria-label="Close student registration dialog">×</button></div><label>Student name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Enter full name" required /></label><label>Roll number<input value={roll} onChange={(event) => setRoll(event.target.value)} placeholder="Enter roll number" required /></label><label>Department<select value={course} onChange={(event) => setCourse(event.target.value)}><option>Computer Science</option><option>Information Technology</option><option>Business Administration</option><option>Other</option></select></label>{error && <p className="form-error">{error}</p>}<div className="modal-actions"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving..." : "Register Student"}</button></div></form></div>;
 }
 
 function EnrollmentModal({ student, onClose, onComplete }: { student: Student; onClose: () => void; onComplete: (result: { saved: number; images: number; ready: boolean }) => void }) {
@@ -1024,5 +1121,5 @@ function EnrollmentModal({ student, onClose, onComplete }: { student: Student; o
     }
   };
 
-  return <div className="modal-backdrop"><div className="modal enrollment-modal"><div className="modal-heading"><div><span className="eyebrow">AI Face Enrollment</span><h2>{student.name}</h2></div><button type="button" onClick={onClose}>×</button></div><div className="enrollment-camera"><video ref={videoRef} autoPlay playsInline muted /><div className="face-guide" /></div><p className="enrollment-status">{status}</p><div className="capture-progress"><span style={{ width: `${Math.min(frames.length / 6, 1) * 100}%` }} /></div><div className="enrollment-count">{frames.length} / 6 images</div><div className="modal-actions"><button type="button" className="ghost-button" onClick={() => setFrames([])} disabled={!frames.length || uploading}>Reset</button><button type="button" className="ghost-button" onClick={capture} disabled={uploading || frames.length >= 8}>Capture</button><button type="button" className="primary-button" onClick={upload} disabled={frames.length < 3 || uploading}>{uploading ? "AI Processing..." : "Save Face Profile"}</button></div></div></div>;
+  return <div className="modal-backdrop"><div className="modal enrollment-modal" role="dialog" aria-modal="true" aria-labelledby="face-enrollment-title" tabIndex={-1} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}><div className="modal-heading"><div><span className="eyebrow">AI Face Enrollment</span><h2 id="face-enrollment-title">{student.name}</h2></div><button type="button" onClick={onClose} aria-label="Close face enrollment dialog">×</button></div><div className="enrollment-camera"><video ref={videoRef} autoPlay playsInline muted /><div className="face-guide" /></div><p className="enrollment-status">{status}</p><div className="capture-progress"><span style={{ width: `${Math.min(frames.length / 6, 1) * 100}%` }} /></div><div className="enrollment-count">{frames.length} / 6 images</div><div className="modal-actions"><button type="button" className="ghost-button" onClick={() => setFrames([])} disabled={!frames.length || uploading}>Reset</button><button type="button" className="ghost-button" onClick={capture} disabled={uploading || frames.length >= 8}>Capture</button><button type="button" className="primary-button" onClick={upload} disabled={frames.length < 3 || uploading}>{uploading ? "AI Processing..." : "Save Face Profile"}</button></div></div></div>;
 }

@@ -12,6 +12,11 @@ test("static Netlify export contains the secure app shell and assets", async () 
   assert.match(source, /AI server is not responding/);
   assert.match(source, /Try Again/);
   assert.match(source, /controller\.abort\(\)/);
+  assert.match(source, /Search name, roll or department/);
+  assert.match(source, /face-monitor-preferences/);
+  assert.match(source, /form\.append\("threshold"/);
+  assert.match(source, /AI reconnecting/);
+  assert.match(source, /Show password/);
   await access(new URL("../out/favicon.svg", import.meta.url));
   await access(new URL("../out/og.png", import.meta.url));
 });
