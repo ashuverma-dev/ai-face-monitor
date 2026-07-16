@@ -31,7 +31,8 @@ test("static Netlify export contains the secure app shell and assets", async () 
   assert.match(source, /Attendance Percentage/);
   assert.match(source, /Captured Image Retention/);
   assert.match(source, /Backup & Restore/);
-  assert.match(source, /Email \/ WhatsApp Alerts/);
+  assert.match(source, /Gmail Attendance Alerts/);
+  assert.doesNotMatch(source, /WhatsApp/);
   assert.match(source, /Real-world Readiness/);
   await access(new URL("../out/favicon.svg", import.meta.url));
   await access(new URL("../out/og.png", import.meta.url));
