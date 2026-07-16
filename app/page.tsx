@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 
-type PageKey = "dashboard" | "monitoring" | "students" | "logs" | "images" | "reports" | "settings";
+type PageKey = "dashboard" | "monitoring" | "sessions" | "students" | "logs" | "images" | "reports" | "settings";
 
 type Student = {
   id: number;
@@ -93,6 +93,10 @@ type AppPreferences = {
   mirrorPreview: boolean;
   scanEffect: boolean;
 };
+
+type AttendanceSession = { id: string; title: string; subject: string; late_after_minutes: number; start_at: string; end_at: string | null; status: "ACTIVE" | "CLOSED" };
+type SessionSummary = { session: AttendanceSession; counts: Record<string, number>; records: { student_id: number; name: string; roll: string; status: "PRESENT" | "LATE" | "ABSENT"; first_seen: string | null }[] };
+type AuditEntry = { id: string; action: string; details: string; created_at: string };
 
 const TOKEN_KEY = "face-monitor-session-token";
 const ROLE_KEY = "face-monitor-session-role";
@@ -180,6 +184,7 @@ function formatLogTime(value: string, includeDate = false): string {
 const navItems: { key: PageKey; label: string; icon: string }[] = [
   { key: "dashboard", label: "Dashboard", icon: "◆" },
   { key: "monitoring", label: "Live Monitoring", icon: "◉" },
+  { key: "sessions", label: "Class Sessions", icon: "▦" },
   { key: "students", label: "Students", icon: "+" },
   { key: "logs", label: "Recognition Logs", icon: "≡" },
   { key: "images", label: "Captured Images", icon: "▣" },
@@ -495,6 +500,7 @@ export default function Home() {
             preferences={preferences}
           />
         )}
+        {page === "sessions" && <Sessions showToast={showToast} />}
         {page === "students" && (
           <Students
             students={students}
@@ -505,10 +511,10 @@ export default function Home() {
             showToast={showToast}
           />
         )}
-        {page === "logs" && <Logs showToast={showToast} />}
+        {page === "logs" && <Logs showToast={showToast} students={students} />}
         {page === "images" && <Images navigate={navigate} showToast={showToast} />}
-        {page === "reports" && <Reports showToast={showToast} />}
-        {page === "settings" && <Settings preferences={preferences} onSave={savePreferences} />}
+        {page === "reports" && <Reports showToast={showToast} students={students} />}
+        {page === "settings" && <Settings preferences={preferences} onSave={savePreferences} showToast={showToast} />}
       </main>
 
       {showStudentForm && (
@@ -855,7 +861,52 @@ function Students({ students, setStudents, openForm, openCapture, openPortal, sh
   );
 }
 
-function Logs({ showToast }: { showToast: (message: string) => void }) {
+function Sessions({ showToast }: { showToast: (message: string) => void }) {
+  const [sessions, setSessions] = useState<AttendanceSession[]>([]);
+  const [selected, setSelected] = useState("");
+  const [summary, setSummary] = useState<SessionSummary | null>(null);
+  const [title, setTitle] = useState("");
+  const [subject, setSubject] = useState("");
+  const [lateMinutes, setLateMinutes] = useState(10);
+
+  const loadSessions = useCallback(async () => {
+    try {
+      const data = await apiRequest<AttendanceSession[]>("/sessions");
+      setSessions(data);
+      setSelected((current) => current || data[0]?.id || "");
+    } catch (error) { showToast(error instanceof Error ? error.message : "Sessions could not be loaded"); }
+  }, [showToast]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadSessions(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadSessions]);
+  useEffect(() => {
+    if (!selected) return;
+    apiRequest<SessionSummary>(`/sessions/${selected}/summary`).then(setSummary).catch(() => setSummary(null));
+  }, [selected, sessions]);
+
+  const createSession = async (event: FormEvent) => {
+    event.preventDefault();
+    try {
+      const created = await apiRequest<AttendanceSession>("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, subject, late_after_minutes: lateMinutes }) });
+      setTitle(""); setSubject(""); setSelected(created.id); await loadSessions(); showToast("Attendance session started");
+    } catch (error) { showToast(error instanceof Error ? error.message : "Session could not be started"); }
+  };
+
+  const closeSession = async (id: string) => {
+    try { await apiRequest(`/sessions/${id}/close`, { method: "POST" }); await loadSessions(); showToast("Attendance session closed"); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Session could not be closed"); }
+  };
+
+  return <><PageHeader title="Class Sessions" subtitle="Track present, late and absent students for each lecture" /><div className="page-body">
+    <form className="panel session-create" onSubmit={createSession}><div><span className="eyebrow">Start attendance</span><h2>New Class Session</h2></div><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Class / Section" aria-label="Class or section" required /><input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" aria-label="Subject" required /><label>Late after<input type="number" min="1" max="120" value={lateMinutes} onChange={(event) => setLateMinutes(Number(event.target.value))} /> minutes</label><button className="primary-button" type="submit">Start Session</button></form>
+    <div className="session-layout"><section className="panel session-list"><div className="card-heading"><h3>Recent Sessions</h3><span>{sessions.length}</span></div>{sessions.map((item) => <button key={item.id} className={selected === item.id ? "session-item active" : "session-item"} onClick={() => setSelected(item.id)}><strong>{item.title}</strong><span>{item.subject}</span><small>{item.status} · {formatLogTime(item.start_at, true)}</small></button>)}{!sessions.length && <div className="empty-list">Start your first class session above.</div>}</section>
+    <section className="panel session-summary">{summary ? <><div className="card-heading"><div><h3>{summary.session.title} · {summary.session.subject}</h3><p>Late after {summary.session.late_after_minutes} minutes</p></div>{summary.session.status === "ACTIVE" && <button className="danger-button" onClick={() => void closeSession(summary.session.id)}>Close Session</button>}</div><div className="session-counts"><span className="good">Present <strong>{summary.counts.PRESENT || 0}</strong></span><span className="warning">Late <strong>{summary.counts.LATE || 0}</strong></span><span className="bad">Absent <strong>{summary.counts.ABSENT || 0}</strong></span></div><div className="responsive-table"><table><thead><tr><th>Student</th><th>Roll</th><th>First Seen</th><th>Status</th></tr></thead><tbody>{summary.records.map((record) => <tr key={record.student_id}><td>{record.name}</td><td>{record.roll}</td><td>{record.first_seen ? formatLogTime(record.first_seen, true) : "—"}</td><td><span className={`attendance-status ${record.status.toLowerCase()}`}>{record.status}</span></td></tr>)}</tbody></table></div></> : <div className="empty-list">Select a session to view attendance.</div>}</section></div>
+  </div></>;
+}
+
+function Logs({ showToast, students }: { showToast: (message: string) => void; students: Student[] }) {
   const [logs, setLogs] = useState<RecognitionLog[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("ALL");
@@ -896,6 +947,15 @@ function Logs({ showToast }: { showToast: (message: string) => void }) {
     }
   };
 
+  const correctLog = async (log: RecognitionLog, value: string) => {
+    const studentId = value === "UNKNOWN" ? null : Number(value);
+    try {
+      const updated = await apiRequest<RecognitionLog>(`/logs/${log.log_id}/correct`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ student_id: studentId }) });
+      setLogs((current) => current.map((item) => item.log_id === log.log_id ? updated : item));
+      showToast("Recognition record corrected");
+    } catch (error) { showToast(error instanceof Error ? error.message : "Record could not be corrected"); }
+  };
+
   const clearLogs = async () => {
     if (!logs.length || !window.confirm("Delete all recognition logs and their captured images?")) return;
     try {
@@ -921,7 +981,7 @@ function Logs({ showToast }: { showToast: (message: string) => void }) {
             <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter recognition status"><option value="ALL">All activity</option><option value="RECOGNIZED">Recognized</option><option value="UNKNOWN">Unknown</option></select>
           </div>
           <div className="responsive-table"><table><thead><tr><th>Student</th><th>Confidence</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>
-            {visibleLogs.map((log) => <tr key={log.log_id}><td>{log.status === "UNKNOWN" ? "Unknown Face" : log.student_name}</td><td>{log.status === "RECOGNIZED" ? `${Math.round(log.confidence * 100)}%` : "—"}</td><td>{formatLogTime(log.detection_time, true)}</td><td><span className={log.status === "RECOGNIZED" ? "table-status success" : "table-status unknown"}>{log.status === "RECOGNIZED" ? "Recognized" : "Unknown"}</span></td><td><button className="table-delete" onClick={() => void removeLog(log)}>Delete</button></td></tr>)}
+            {visibleLogs.map((log) => <tr key={log.log_id}><td>{log.status === "UNKNOWN" ? "Unknown Face" : log.student_name}</td><td>{log.status === "RECOGNIZED" ? `${Math.round(log.confidence * 100)}%` : "—"}</td><td>{formatLogTime(log.detection_time, true)}</td><td><span className={log.status === "RECOGNIZED" ? "table-status success" : "table-status unknown"}>{log.status === "RECOGNIZED" ? "Recognized" : "Unknown"}</span></td><td><div className="log-actions"><select value={log.student_id || "UNKNOWN"} onChange={(event) => void correctLog(log, event.target.value)} aria-label={`Correct record ${log.log_id}`}><option value="UNKNOWN">Unknown</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select><button className="table-delete" onClick={() => void removeLog(log)}>Delete</button></div></td></tr>)}
             {!visibleLogs.length && <tr><td className="table-empty" colSpan={5}>{loading ? "Loading recognition logs..." : "No matching recognition activity found."}</td></tr>}
           </tbody></table></div>
         </section>
@@ -998,12 +1058,18 @@ function Images({ navigate, showToast }: { navigate: (page: PageKey) => void; sh
   </>;
 }
 
-function Reports({ showToast }: { showToast: (message: string) => void }) {
+function Reports({ showToast, students }: { showToast: (message: string) => void; students: Student[] }) {
   type ReportPeriod = "daily" | "monthly";
   type ReportType = "xlsx" | "pdf";
-  type GeneratedReport = { period: ReportPeriod; fileType: ReportType; filename: string; generatedAt: string };
+  type GeneratedReport = { period: ReportPeriod | "custom"; fileType: ReportType; filename: string; generatedAt: string };
   const [generated, setGenerated] = useState<GeneratedReport[]>([]);
   const [downloading, setDownloading] = useState("");
+  const today = new Date().toISOString().slice(0, 10);
+  const [startDate, setStartDate] = useState(`${today.slice(0, 8)}01`);
+  const [endDate, setEndDate] = useState(today);
+  const [studentFilter, setStudentFilter] = useState("");
+  const [departmentFilter, setDepartmentFilter] = useState("");
+  const departments = [...new Set(students.map((student) => student.course).filter(Boolean))];
 
   const download = async (period: ReportPeriod, fileType: ReportType) => {
     const key = `${period}-${fileType}`;
@@ -1032,17 +1098,39 @@ function Reports({ showToast }: { showToast: (message: string) => void }) {
       <button className="ghost-button" disabled={Boolean(downloading)} onClick={() => void download(period, "pdf")}>{downloading === `${period}-pdf` ? "Creating..." : "PDF Report"}</button>
     </div>
   </article>;
+  const downloadCustom = async (fileType: ReportType) => {
+    setDownloading(`custom-${fileType}`);
+    const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+    if (studentFilter) params.set("student_id", studentFilter);
+    if (departmentFilter) params.set("department", departmentFilter);
+    try {
+      const { blob, filename } = await apiDownload(`/custom-reports/${fileType}?${params}`);
+      const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setGenerated((current) => [{ period: "custom", fileType, filename, generatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }, ...current]);
+      showToast("Filtered report saved in Downloads");
+    } catch (error) { showToast(error instanceof Error ? error.message : "Filtered report could not be generated"); }
+    finally { setDownloading(""); }
+  };
   return <><PageHeader title="Reports" subtitle="Generate real attendance reports from the live database" /><div className="page-body">
+    <section className="panel custom-report"><div><span className="eyebrow">Custom report</span><h2>Filter Attendance</h2><p>Choose dates and optionally narrow the file to one student or department.</p></div><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>To<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><select value={studentFilter} onChange={(event) => setStudentFilter(event.target.value)} aria-label="Filter report by student"><option value="">All students</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select><select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)} aria-label="Filter report by department"><option value="">All departments</option>{departments.map((department) => <option key={department}>{department}</option>)}</select><div><button className="primary-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("xlsx")}>Filtered Excel</button><button className="ghost-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("pdf")}>Filtered PDF</button></div></section>
     <div className="report-grid">{reportCard("daily", "Today", "Daily Report", "Download today's recognized students, unknown events and attendance summary.")}{reportCard("monthly", "This Month", "Monthly Report", "Download the current month's complete attendance activity and summary.")}</div>
     <section className="panel generated-files"><div className="card-heading"><div><h3>Generated Files</h3><p>Reports are saved in your browser&apos;s Downloads folder.</p></div><span className="report-live-badge">● Live database</span></div>
-      {generated.length ? <div className="generated-file-list">{generated.map((file) => <div className="file-row" key={`${file.period}-${file.fileType}`}><span>{file.fileType === "pdf" ? "PDF" : "XL"}</span><div><strong>{file.filename}</strong><p>Generated at {file.generatedAt} • Saved to Downloads</p></div><button disabled={Boolean(downloading)} onClick={() => void download(file.period, file.fileType)}>Download Again</button></div>)}</div> : <div className="report-empty"><span>↗</span><div><strong>No report generated in this session</strong><p>Choose Excel or PDF above. The file will appear here and in Downloads.</p></div></div>}
+      {generated.length ? <div className="generated-file-list">{generated.map((file, index) => <div className="file-row" key={`${file.period}-${file.fileType}-${index}`}><span>{file.fileType === "pdf" ? "PDF" : "XL"}</span><div><strong>{file.filename}</strong><p>Generated at {file.generatedAt} • Saved to Downloads</p></div><button disabled={Boolean(downloading)} onClick={() => file.period === "custom" ? void downloadCustom(file.fileType) : void download(file.period, file.fileType)}>Download Again</button></div>)}</div> : <div className="report-empty"><span>↗</span><div><strong>No report generated in this session</strong><p>Choose Excel or PDF above. The file will appear here and in Downloads.</p></div></div>}
     </section>
   </div></>;
 }
 
-function Settings({ preferences, onSave }: { preferences: AppPreferences; onSave: (preferences: AppPreferences) => void }) {
+function Settings({ preferences, onSave, showToast }: { preferences: AppPreferences; onSave: (preferences: AppPreferences) => void; showToast: (message: string) => void }) {
   const [draft, setDraft] = useState(preferences);
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
   const thresholdLabel = draft.threshold >= 70 ? "Strict" : draft.threshold <= 42 ? "Flexible" : "Balanced";
+  useEffect(() => { apiRequest<AuditEntry[]>("/audit").then(setAudit).catch(() => setAudit([])); }, []);
+  const downloadBackup = async () => {
+    try {
+      const { blob, filename } = await apiDownload("/backup"); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); showToast("Database backup saved in Downloads");
+      setAudit(await apiRequest<AuditEntry[]>("/audit"));
+    } catch (error) { showToast(error instanceof Error ? error.message : "Backup could not be created"); }
+  };
   return <>
     <PageHeader title="System Settings" subtitle="Configure recognition and camera preferences" />
     <div className="page-body settings-grid">
@@ -1061,6 +1149,8 @@ function Settings({ preferences, onSave }: { preferences: AppPreferences; onSave
         <div className="settings-actions"><button className="primary-button" onClick={() => onSave(draft)}>Save Settings</button><button className="ghost-button" onClick={() => setDraft(DEFAULT_PREFERENCES)}>Reset Defaults</button></div>
       </section>
       <section className="panel setting-card system-info"><span className="eyebrow">Active Configuration</span><h2>Monitoring Setup</h2><p>The values below are sent to the live recognition screen.</p><ul><li>{draft.threshold}% face match threshold</li><li>{draft.mirrorPreview ? "Mirrored" : "Natural"} camera preview</li><li>Scan effect {draft.scanEffect ? "enabled" : "disabled"}</li></ul></section>
+      <section className="panel setting-card"><span className="eyebrow">Data safety</span><h2>Database Backup</h2><p>Download a transaction-safe copy of students, attendance records and settings.</p><button className="primary-button" onClick={() => void downloadBackup()}>Download Backup</button></section>
+      <section className="panel setting-card audit-card"><span className="eyebrow">Admin history</span><h2>Audit Activity</h2><p>Recent high-impact administrative actions.</p><div className="audit-list">{audit.slice(0, 6).map((item) => <div key={item.id}><strong>{item.action.replaceAll("_", " ")}</strong><span>{item.details}</span><small>{formatLogTime(item.created_at, true)}</small></div>)}{!audit.length && <div className="empty-list">No administrative activity yet.</div>}</div></section>
     </div>
   </>;
 }
