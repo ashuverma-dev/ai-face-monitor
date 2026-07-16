@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 
-type PageKey = "dashboard" | "monitoring" | "sessions" | "students" | "logs" | "images" | "reports" | "settings";
+type PageKey = "dashboard" | "monitoring" | "students" | "logs" | "images" | "reports" | "settings";
 
 type Student = {
   id: number;
@@ -94,8 +94,6 @@ type AppPreferences = {
   scanEffect: boolean;
 };
 
-type AttendanceSession = { id: string; title: string; subject: string; late_after_minutes: number; start_at: string; end_at: string | null; status: "ACTIVE" | "CLOSED" };
-type SessionSummary = { session: AttendanceSession; counts: Record<string, number>; records: { student_id: number; name: string; roll: string; status: "PRESENT" | "LATE" | "ABSENT"; first_seen: string | null }[] };
 type AuditEntry = { id: string; action: string; details: string; created_at: string };
 
 const TOKEN_KEY = "face-monitor-session-token";
@@ -184,7 +182,6 @@ function formatLogTime(value: string, includeDate = false): string {
 const navItems: { key: PageKey; label: string; icon: string }[] = [
   { key: "dashboard", label: "Dashboard", icon: "◆" },
   { key: "monitoring", label: "Live Monitoring", icon: "◉" },
-  { key: "sessions", label: "Class Sessions", icon: "▦" },
   { key: "students", label: "Students", icon: "+" },
   { key: "logs", label: "Recognition Logs", icon: "≡" },
   { key: "images", label: "Captured Images", icon: "▣" },
@@ -500,7 +497,6 @@ export default function Home() {
             preferences={preferences}
           />
         )}
-        {page === "sessions" && <Sessions showToast={showToast} />}
         {page === "students" && (
           <Students
             students={students}
@@ -861,51 +857,6 @@ function Students({ students, setStudents, openForm, openCapture, openPortal, sh
   );
 }
 
-function Sessions({ showToast }: { showToast: (message: string) => void }) {
-  const [sessions, setSessions] = useState<AttendanceSession[]>([]);
-  const [selected, setSelected] = useState("");
-  const [summary, setSummary] = useState<SessionSummary | null>(null);
-  const [title, setTitle] = useState("");
-  const [subject, setSubject] = useState("");
-  const [lateMinutes, setLateMinutes] = useState(10);
-
-  const loadSessions = useCallback(async () => {
-    try {
-      const data = await apiRequest<AttendanceSession[]>("/sessions");
-      setSessions(data);
-      setSelected((current) => current || data[0]?.id || "");
-    } catch (error) { showToast(error instanceof Error ? error.message : "Sessions could not be loaded"); }
-  }, [showToast]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void loadSessions(), 0);
-    return () => window.clearTimeout(timer);
-  }, [loadSessions]);
-  useEffect(() => {
-    if (!selected) return;
-    apiRequest<SessionSummary>(`/sessions/${selected}/summary`).then(setSummary).catch(() => setSummary(null));
-  }, [selected, sessions]);
-
-  const createSession = async (event: FormEvent) => {
-    event.preventDefault();
-    try {
-      const created = await apiRequest<AttendanceSession>("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, subject, late_after_minutes: lateMinutes }) });
-      setTitle(""); setSubject(""); setSelected(created.id); await loadSessions(); showToast("Attendance session started");
-    } catch (error) { showToast(error instanceof Error ? error.message : "Session could not be started"); }
-  };
-
-  const closeSession = async (id: string) => {
-    try { await apiRequest(`/sessions/${id}/close`, { method: "POST" }); await loadSessions(); showToast("Attendance session closed"); }
-    catch (error) { showToast(error instanceof Error ? error.message : "Session could not be closed"); }
-  };
-
-  return <><PageHeader title="Class Sessions" subtitle="Track present, late and absent students for each lecture" /><div className="page-body">
-    <form className="panel session-create" onSubmit={createSession}><div><span className="eyebrow">Start attendance</span><h2>New Class Session</h2></div><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Class / Section" aria-label="Class or section" required /><input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder="Subject" aria-label="Subject" required /><label>Late after<input type="number" min="1" max="120" value={lateMinutes} onChange={(event) => setLateMinutes(Number(event.target.value))} /> minutes</label><button className="primary-button" type="submit">Start Session</button></form>
-    <div className="session-layout"><section className="panel session-list"><div className="card-heading"><h3>Recent Sessions</h3><span>{sessions.length}</span></div>{sessions.map((item) => <button key={item.id} className={selected === item.id ? "session-item active" : "session-item"} onClick={() => setSelected(item.id)}><strong>{item.title}</strong><span>{item.subject}</span><small>{item.status} · {formatLogTime(item.start_at, true)}</small></button>)}{!sessions.length && <div className="empty-list">Start your first class session above.</div>}</section>
-    <section className="panel session-summary">{summary ? <><div className="card-heading"><div><h3>{summary.session.title} · {summary.session.subject}</h3><p>Late after {summary.session.late_after_minutes} minutes</p></div>{summary.session.status === "ACTIVE" && <button className="danger-button" onClick={() => void closeSession(summary.session.id)}>Close Session</button>}</div><div className="session-counts"><span className="good">Present <strong>{summary.counts.PRESENT || 0}</strong></span><span className="warning">Late <strong>{summary.counts.LATE || 0}</strong></span><span className="bad">Absent <strong>{summary.counts.ABSENT || 0}</strong></span></div><div className="responsive-table"><table><thead><tr><th>Student</th><th>Roll</th><th>First Seen</th><th>Status</th></tr></thead><tbody>{summary.records.map((record) => <tr key={record.student_id}><td>{record.name}</td><td>{record.roll}</td><td>{record.first_seen ? formatLogTime(record.first_seen, true) : "—"}</td><td><span className={`attendance-status ${record.status.toLowerCase()}`}>{record.status}</span></td></tr>)}</tbody></table></div></> : <div className="empty-list">Select a session to view attendance.</div>}</section></div>
-  </div></>;
-}
-
 function Logs({ showToast, students }: { showToast: (message: string) => void; students: Student[] }) {
   const [logs, setLogs] = useState<RecognitionLog[]>([]);
   const [search, setSearch] = useState("");
@@ -1068,8 +1019,6 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
   const [startDate, setStartDate] = useState(`${today.slice(0, 8)}01`);
   const [endDate, setEndDate] = useState(today);
   const [studentFilter, setStudentFilter] = useState("");
-  const [departmentFilter, setDepartmentFilter] = useState("");
-  const departments = [...new Set(students.map((student) => student.course).filter(Boolean))];
 
   const download = async (period: ReportPeriod, fileType: ReportType) => {
     const key = `${period}-${fileType}`;
@@ -1102,7 +1051,6 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
     setDownloading(`custom-${fileType}`);
     const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
     if (studentFilter) params.set("student_id", studentFilter);
-    if (departmentFilter) params.set("department", departmentFilter);
     try {
       const { blob, filename } = await apiDownload(`/custom-reports/${fileType}?${params}`);
       const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -1112,7 +1060,7 @@ function Reports({ showToast, students }: { showToast: (message: string) => void
     finally { setDownloading(""); }
   };
   return <><PageHeader title="Reports" subtitle="Generate real attendance reports from the live database" /><div className="page-body">
-    <section className="panel custom-report"><div><span className="eyebrow">Custom report</span><h2>Filter Attendance</h2><p>Choose dates and optionally narrow the file to one student or department.</p></div><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>To<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><select value={studentFilter} onChange={(event) => setStudentFilter(event.target.value)} aria-label="Filter report by student"><option value="">All students</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select><select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)} aria-label="Filter report by department"><option value="">All departments</option>{departments.map((department) => <option key={department}>{department}</option>)}</select><div><button className="primary-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("xlsx")}>Filtered Excel</button><button className="ghost-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("pdf")}>Filtered PDF</button></div></section>
+    <section className="panel custom-report"><div><span className="eyebrow">Custom report</span><h2>Filter Attendance</h2><p>Choose dates and optionally narrow the file to one student.</p></div><label>From<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>To<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><select value={studentFilter} onChange={(event) => setStudentFilter(event.target.value)} aria-label="Filter report by student"><option value="">All students</option>{students.map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}</select><div><button className="primary-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("xlsx")}>Filtered Excel</button><button className="ghost-button" disabled={Boolean(downloading)} onClick={() => void downloadCustom("pdf")}>Filtered PDF</button></div></section>
     <div className="report-grid">{reportCard("daily", "Today", "Daily Report", "Download today's recognized students, unknown events and attendance summary.")}{reportCard("monthly", "This Month", "Monthly Report", "Download the current month's complete attendance activity and summary.")}</div>
     <section className="panel generated-files"><div className="card-heading"><div><h3>Generated Files</h3><p>Reports are saved in your browser&apos;s Downloads folder.</p></div><span className="report-live-badge">● Live database</span></div>
       {generated.length ? <div className="generated-file-list">{generated.map((file, index) => <div className="file-row" key={`${file.period}-${file.fileType}-${index}`}><span>{file.fileType === "pdf" ? "PDF" : "XL"}</span><div><strong>{file.filename}</strong><p>Generated at {file.generatedAt} • Saved to Downloads</p></div><button disabled={Boolean(downloading)} onClick={() => file.period === "custom" ? void downloadCustom(file.fileType) : void download(file.period, file.fileType)}>Download Again</button></div>)}</div> : <div className="report-empty"><span>↗</span><div><strong>No report generated in this session</strong><p>Choose Excel or PDF above. The file will appear here and in Downloads.</p></div></div>}
