@@ -26,10 +26,13 @@ test("static Netlify export contains the secure app shell and assets", async () 
   assert.match(source, /Forgot password\?/);
   assert.match(source, /Teacher \/ Admin Accounts/);
   assert.match(source, /auth\/password\/change/);
-  assert.match(source, /Live check/);
+  assert.match(source, /Advanced live check/);
   assert.match(source, /Import CSV/);
   assert.match(source, /Attendance Percentage/);
   assert.match(source, /Captured Image Retention/);
+  assert.match(source, /Backup & Restore/);
+  assert.match(source, /Email \/ WhatsApp Alerts/);
+  assert.match(source, /Real-world Readiness/);
   await access(new URL("../out/favicon.svg", import.meta.url));
   await access(new URL("../out/og.png", import.meta.url));
 });

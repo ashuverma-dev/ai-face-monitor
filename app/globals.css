@@ -211,6 +211,7 @@ button { cursor: pointer; }
 .liveness-status strong { font-size: 11px; }
 .liveness-status > div { height: 5px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.08); }
 .liveness-status i { height: 100%; display: block; background: linear-gradient(90deg, var(--green), var(--lavender)); transition: width .25s ease; }
+.liveness-status small { color: var(--muted); font-size: 9px; line-height: 1.35; }
 
 .students-panel { padding: 0; overflow: hidden; }
 .students-panel > .card-heading { padding: 18px; border-bottom: 1px solid rgba(166,99,204,.16); }
@@ -328,6 +329,11 @@ input[type="range"] { width: 100%; accent-color: var(--primary); }
 .percentage-list small { color: var(--muted); }
 .percentage-list b { font-size: 15px; }
 .retention-card label { display: grid; grid-template-columns: 1fr 80px auto; align-items: center; gap: 7px; margin: 10px 0; color: var(--muted); font-size: 10px; }
+.backup-restore-card > input, .alerts-card > input { width: 100%; min-height: 40px; margin-top: 9px; border: 1px solid rgba(166,99,204,.27); border-radius: 10px; padding: 0 11px; color: var(--text); background: rgba(23,17,35,.7); }
+.alerts-card label { display: grid; grid-template-columns: 1fr 82px auto; align-items: center; gap: 7px; margin-top: 10px; color: var(--muted); font-size: 10px; }
+.alerts-card .switch-row { display: flex; }
+.alerts-card small, .readiness-card small { display: block; margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.readiness-card ul { margin: 12px 0 0; padding-left: 17px; color: var(--muted); font-size: 10px; line-height: 1.8; }
 .audit-list { display: grid; gap: 7px; }
 .audit-list > div { padding: 9px; display: grid; gap: 3px; border-radius: 9px; background: rgba(255,255,255,.04); }
 .audit-list span, .audit-list small { color: var(--muted); font-size: 10px; }
