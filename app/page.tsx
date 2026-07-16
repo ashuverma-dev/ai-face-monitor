@@ -214,6 +214,18 @@ function NavIcon({ page }: { page: PageKey }) {
   return <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[page]}</svg>;
 }
 
+function MetricIcon({ label }: { label: string }) {
+  const content: Record<string, ReactNode> = {
+    Students: <><circle cx="9" cy="8" r="3"/><path d="M3.5 20v-1.5A4.5 4.5 0 0 1 8 14h2a4.5 4.5 0 0 1 4.5 4.5V20M16 6.5a3 3 0 0 1 0 5.5M17 15a4 4 0 0 1 3.5 4"/></>,
+    "Recognized Today": <><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="11" r="3"/><path d="M7.5 18c.8-2.8 2.3-4 4.5-4s3.7 1.2 4.5 4"/></>,
+    "Unknown Today": <><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.7 2.7 0 0 1 5.1 1.2c0 1.8-2.6 2.1-2.6 3.8M12 17h.01"/></>,
+    "Avg. Confidence": <><path d="M4 13a8 8 0 1 1 16 0"/><path d="m12 13 4-4"/><circle cx="12" cy="13" r="2"/><path d="M6 19h12"/></>,
+    "Attendance Rate": <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+    "All Detections": <><path d="M4 19V9M10 19V5M16 19v-7M22 19V2"/><path d="M2 19h22"/></>,
+  };
+  return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{content[label]}</svg>;
+}
+
 function Toast({ message }: { message: string }) {
   if (!message) return null;
   return <div className="toast" role="status"><span>✓</span>{message}</div>;
@@ -739,8 +751,9 @@ function Dashboard({ navigate, showToast }: { navigate: (page: PageKey) => void;
       <PageHeader title="Dashboard" subtitle="Live attendance overview • real database data" action={<button className="ghost-button" onClick={() => { setLoading(true); void loadDashboard(); }}>↻ Refresh</button>} />
       <div className="page-body">
         <section className="hero-panel">
-          <div><span className="eyebrow">Smart attendance system</span><h2>Smart attendance, made simple.</h2><p>{health?.status === "ok" ? `System ready • ${health.registered_students} registered students` : "Connecting to the AI backend..."}</p></div>
-          <div className="hero-action"><span className="ready-pill">● {health?.status === "ok" ? "AI system is ready" : "Checking system"}</span><button className="primary-button" onClick={() => navigate("monitoring")}>▶ Start Monitoring</button></div>
+          <div className="hero-copy"><span className="eyebrow">AI-powered attendance</span><h2>Recognition that feels <span>effortless.</span></h2><p>Fast, secure and accurate attendance built for modern classrooms.</p><div className="hero-meta"><span>{health?.registered_students || 0} students</span><span>Live anti-spoofing</span><span>Secure records</span></div></div>
+          <div className="hero-visual" aria-hidden="true"><Image src="/ai-visual.svg" width={420} height={320} alt="" priority /></div>
+          <div className="hero-action"><span className="ready-pill"><i />{health?.status === "ok" ? "All systems operational" : "Connecting securely"}</span><button className="primary-button hero-button" onClick={() => navigate("monitoring")}>Open Live Monitoring <span>→</span></button></div>
         </section>
 
         <h3 className="section-title">System Health</h3>
@@ -750,7 +763,7 @@ function Dashboard({ navigate, showToast }: { navigate: (page: PageKey) => void;
 
         <h3 className="section-title">Today&apos;s Overview</h3>
         <section className="stats-grid">
-          {cards.map(([label, value, note, color]) => <article className={`stat-card ${color}`} key={label}><div><small>{label}</small><strong>{value}</strong><p>{note}</p></div><span className="stat-symbol">{label[0]}</span></article>)}
+          {cards.map(([label, value, note, color]) => <article className={`stat-card ${color}`} key={label}><div><small>{label}</small><strong>{value}</strong><p>{note}</p></div><span className="stat-symbol"><MetricIcon label={label} /></span></article>)}
         </section>
 
         <section className="chart-card">

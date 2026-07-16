@@ -1,0 +1,42 @@
+<svg width="420" height="320" viewBox="0 0 420 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="panel" x1="55" y1="24" x2="353" y2="302" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7567F4" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#21D3B2" stop-opacity="0.06"/>
+    </linearGradient>
+    <linearGradient id="scan" x1="98" y1="90" x2="318" y2="90" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#50E7D0" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#50E7D0"/>
+      <stop offset="1" stop-color="#50E7D0" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(210 156) rotate(90) scale(116)">
+      <stop stop-color="#7969FF" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#7969FF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="55" y="46" width="310" height="228" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <circle cx="210" cy="156" r="116" fill="url(#halo)"/>
+  <circle cx="210" cy="156" r="106" stroke="#9186FF" stroke-opacity="0.16"/>
+  <circle cx="210" cy="156" r="83" stroke="#55E8D1" stroke-opacity="0.12" stroke-dasharray="5 8"/>
+  <rect x="68" y="38" width="284" height="244" rx="34" fill="url(#panel)" stroke="#A7A1FF" stroke-opacity="0.25"/>
+  <path d="M113 112V88C113 80.268 119.268 74 127 74H151M269 74H293C300.732 74 307 80.268 307 88V112M307 200V224C307 231.732 300.732 238 293 238H269M151 238H127C119.268 238 113 231.732 113 224V200" stroke="#B5AFFF" stroke-width="4" stroke-linecap="round"/>
+  <g filter="url(#glow)">
+    <circle cx="210" cy="137" r="38" stroke="#F6F8FF" stroke-opacity="0.9" stroke-width="3"/>
+    <path d="M154 219C161.5 188.5 180.167 175 210 175C239.833 175 258.5 188.5 266 219" stroke="#F6F8FF" stroke-opacity="0.9" stroke-width="3" stroke-linecap="round"/>
+    <path d="M191 135H198M222 135H229" stroke="#58E7D2" stroke-width="4" stroke-linecap="round"/>
+    <path d="M199 153C206.333 158.333 213.667 158.333 221 153" stroke="#58E7D2" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <rect x="98" y="89" width="224" height="2" rx="1" fill="url(#scan)"/>
+  <circle cx="326" cy="65" r="17" fill="#12273C" stroke="#54E7D1" stroke-opacity="0.55"/>
+  <path d="M319 65.5 324 70l9-10" stroke="#62E8D5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="82" y="251" width="94" height="32" rx="12" fill="#0B1427" stroke="#8D82FF" stroke-opacity="0.28"/>
+  <circle cx="100" cy="267" r="4" fill="#55E8D1"/>
+  <text x="112" y="270" fill="#D8DEF3" font-family="Arial, sans-serif" font-size="10" font-weight="700">LIVE READY</text>
+  <rect x="244" y="251" width="94" height="32" rx="12" fill="#0B1427" stroke="#8D82FF" stroke-opacity="0.28"/>
+  <text x="261" y="270" fill="#D8DEF3" font-family="Arial, sans-serif" font-size="10" font-weight="700">99.8% SECURE</text>
+  <circle cx="78" cy="91" r="3" fill="#786AF4"/>
+  <circle cx="342" cy="223" r="3" fill="#55E8D1"/>
+</svg>
