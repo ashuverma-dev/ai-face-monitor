@@ -6,8 +6,9 @@ test("static Netlify export contains the secure app shell and assets", async () 
   const html = await readFile(new URL("../out/index.html", import.meta.url), "utf8");
   const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   assert.match(html, /AI Face Monitor/);
-  assert.match(html, /Checking secure session/);
-  assert.match(html, /protected attendance system/);
+  assert.match(html, /Preparing your dashboard/);
+  assert.match(html, /Connecting recognition, attendance and secure records/);
+  assert.match(html, /AI Face Monitor logo/);
   assert.doesNotMatch(html, /Starter Project|Codex is working/);
   assert.match(source, /AI server is not responding/);
   assert.match(source, /Try Again/);
@@ -36,5 +37,6 @@ test("static Netlify export contains the secure app shell and assets", async () 
   assert.doesNotMatch(source, /WhatsApp/);
   assert.match(source, /Real-world Readiness/);
   await access(new URL("../out/favicon.svg", import.meta.url));
+  await access(new URL("../out/logo.svg", import.meta.url));
   await access(new URL("../out/og.png", import.meta.url));
 });

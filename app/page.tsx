@@ -187,15 +187,32 @@ function formatLogTime(value: string, includeDate = false): string {
     : { hour: "2-digit", minute: "2-digit" });
 }
 
-const navItems: { key: PageKey; label: string; icon: string }[] = [
-  { key: "dashboard", label: "Dashboard", icon: "◆" },
-  { key: "monitoring", label: "Live Monitoring", icon: "◉" },
-  { key: "students", label: "Students", icon: "+" },
-  { key: "logs", label: "Recognition Logs", icon: "≡" },
-  { key: "images", label: "Captured Images", icon: "▣" },
-  { key: "reports", label: "Reports", icon: "↗" },
-  { key: "settings", label: "System Settings", icon: "⚙" },
+const navItems: { key: PageKey; label: string }[] = [
+  { key: "dashboard", label: "Dashboard" },
+  { key: "monitoring", label: "Live Monitoring" },
+  { key: "students", label: "Students" },
+  { key: "logs", label: "Recognition Logs" },
+  { key: "images", label: "Captured Images" },
+  { key: "reports", label: "Reports" },
+  { key: "settings", label: "System Settings" },
 ];
+
+function BrandLogo({ className = "" }: { className?: string }) {
+  return <span className={`brand-logo ${className}`}><Image src="/logo.svg" width={48} height={48} alt="AI Face Monitor logo" priority /></span>;
+}
+
+function NavIcon({ page }: { page: PageKey }) {
+  const paths: Record<PageKey, ReactNode> = {
+    dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
+    monitoring: <><circle cx="12" cy="12" r="3"/><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/></>,
+    students: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></>,
+    logs: <><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></>,
+    images: <><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></>,
+    reports: <><path d="M4 19V9M10 19V5M16 19v-7M22 19V2"/><path d="M2 19h22"/></>,
+    settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.1A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.1 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H2V9.6h.4A1.7 1.7 0 0 0 4.1 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.5 4.1a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V2h4v.4A1.7 1.7 0 0 0 15 4.1a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 8.5c.17.4.38.75.7 1 .3.25.7.4 1.1.4h.8v4h-.8a1.7 1.7 0 0 0-1.8 1.1Z"/></>,
+  };
+  return <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[page]}</svg>;
+}
 
 function Toast({ message }: { message: string }) {
   if (!message) return null;
@@ -227,7 +244,7 @@ function AuthScreen({
   const [submitting, setSubmitting] = useState(false);
 
   if (mode === "checking") {
-    return <main className="auth-shell"><section className="auth-card auth-loading" aria-live="polite"><div className="auth-mark">AI</div><h1>Checking secure session</h1><p>{slowConnection ? "The AI server is waking up. This can take up to 30 seconds on the first visit." : "Connecting to the protected attendance system..."}</p><div className="auth-progress"><span /></div>{slowConnection && <small className="auth-wakeup-note">Please keep this page open.</small>}</section></main>;
+    return <main className="auth-shell"><section className="auth-card auth-loading" aria-live="polite"><div className="loading-visual"><span className="loading-ring ring-one"/><span className="loading-ring ring-two"/><BrandLogo className="loading-logo" /></div><span className="eyebrow">Secure AI workspace</span><h1>Preparing your dashboard</h1><p>{slowConnection ? "The AI server is waking up. This can take up to 30 seconds on the first visit." : "Connecting recognition, attendance and secure records..."}</p><div className="auth-progress"><span /></div>{slowConnection && <small className="auth-wakeup-note">Please keep this page open.</small>}</section></main>;
   }
 
   if (mode === "unavailable") {
@@ -265,7 +282,7 @@ function AuthScreen({
 
   return <main className="auth-shell">
     <section className="auth-card">
-      <div className="auth-brand"><div className="auth-mark">AI</div><div><span>Secure administration</span><strong>AI Face Monitor</strong></div></div>
+      <div className="auth-brand"><BrandLogo /><div><span>Secure administration</span><strong>AI Face Monitor</strong></div></div>
       {!isSetup && <div className="auth-role-tabs" role="tablist" aria-label="Choose login type">
         <button type="button" role="tab" aria-selected={loginRole === "admin"} className={loginRole === "admin" ? "active" : ""} onClick={() => { setLoginRole("admin"); setRecovering(false); setError(""); }}>Teacher / Admin</button>
         <button type="button" role="tab" aria-selected={loginRole === "student"} className={loginRole === "student" ? "active" : ""} onClick={() => { setLoginRole("student"); setRecovering(false); setError(""); }}>Student</button>
@@ -477,20 +494,20 @@ export default function Home() {
     <div className="app-shell">
       <Toast message={toast} />
       <header className="mobile-header">
-        <div className="mobile-brand"><span>AI</span><strong>AI Face Monitor</strong></div>
+        <div className="mobile-brand"><BrandLogo /><strong>AI Face Monitor</strong></div>
         <button className="menu-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle navigation">{menuOpen ? "×" : "☰"}</button>
       </header>
 
       <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="brand">
-          <div className="brand-mark">AI</div>
+          <BrandLogo />
           <div><strong>AI Face Monitor</strong><small>Attendance System</small></div>
         </div>
         <p className="menu-label">Main menu</p>
         <nav>
           {navItems.map((item) => (
             <button key={item.key} className={page === item.key ? "active" : ""} onClick={() => navigate(item.key)}>
-              <span className="nav-icon">{item.icon}</span>{item.label}
+              <NavIcon page={item.key} />{item.label}
             </button>
           ))}
         </nav>
@@ -584,13 +601,13 @@ function StudentPortal({ onLogout }: { onLogout: () => void }) {
   }, []);
 
   if (!data) {
-    return <main className="student-portal-shell"><section className="student-loading panel"><div className="auth-mark">AI</div><h1>{error || "Loading your attendance..."}</h1>{error && <button className="ghost-button" onClick={onLogout}>Back to login</button>}</section></main>;
+    return <main className="student-portal-shell"><section className="student-loading panel"><div className="loading-visual compact"><span className="loading-ring ring-one"/><BrandLogo className="loading-logo" /></div><h1>{error || "Loading your attendance..."}</h1>{error && <button className="ghost-button" onClick={onLogout}>Back to login</button>}</section></main>;
   }
 
   const initials = data.student.name.split(" ").map((word) => word[0]).join("").slice(0, 2);
   return <main className="student-portal-shell">
     <header className="student-portal-header">
-      <div className="mobile-brand"><span>AI</span><div><strong>Student Attendance</strong><small>Private portal</small></div></div>
+      <div className="mobile-brand"><BrandLogo /><div><strong>Student Attendance</strong><small>Private portal</small></div></div>
       <button className="logout-button" onClick={onLogout}>Log out</button>
     </header>
     <section className="student-welcome panel">
