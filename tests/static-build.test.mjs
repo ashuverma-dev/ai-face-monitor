@@ -17,7 +17,7 @@ test("static Netlify export contains the secure app shell and assets", async () 
   assert.match(source, /form\.append\("threshold"/);
   assert.match(source, /AI reconnecting/);
   assert.match(source, /Show password/);
-  assert.match(source, /Class Sessions/);
+  assert.doesNotMatch(source, /Class Sessions|All departments/);
   assert.match(source, /Recognition record corrected/);
   assert.match(source, /custom-reports/);
   assert.match(source, /Download Backup/);
