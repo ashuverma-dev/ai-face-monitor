@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import "@fontsource-variable/manrope";
 import "./globals.css";
 
 const title = "AI Face Monitor | Smart Attendance";
